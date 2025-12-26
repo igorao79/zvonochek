@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import SimplePeer from 'simple-peer'
 import { WebRTCService, WebRTCRefs } from '@/lib/webrtc'
 import { CallState, User } from '@/lib/types'
@@ -18,16 +18,21 @@ export default function AudioCallPage() {
   const [targetUserId, setTargetUserId] = useState<string>('')
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [isMuted, setIsMuted] = useState(false)
+  const [allUsers, setAllUsers] = useState<User[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null)
   const [contacts, setContacts] = useState<string[]>([])
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [loadingUsers, setLoadingUsers] = useState(true)
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false) // Флаг для предотвращения одновременных вызовов
   const [voiceActivity, setVoiceActivity] = useState<{ local: boolean, remote: boolean }>({ local: false, remote: false })
 
   // Settings modal state
   const [settingsUser, setSettingsUser] = useState<User | null>(null)
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
+
+  const initCompletedRef = useRef(false) // Флаг завершения инициализации
   const [settingsDisplayName, setSettingsDisplayName] = useState('')
   const [settingsUploading, setSettingsUploading] = useState(false)
   const settingsFileInputRef = useRef<HTMLInputElement>(null)
@@ -53,34 +58,102 @@ export default function AudioCallPage() {
     if (!lastSeen) return false
     const lastSeenDate = new Date(lastSeen)
     const now = new Date()
-    const diffMinutes = (now.getTime() - lastSeenDate.getTime()) / (1000 * 60)
-    return diffMinutes < 5 // Онлайн, если активность была менее 5 минут назад
+    const diffSeconds = (now.getTime() - lastSeenDate.getTime()) / 1000
+    return diffSeconds < 60 // Онлайн, если активность была менее 1 минуты назад
   }
 
-  const loadUsers = async () => {
-    if (!currentUser) return
+  const loadUsers = async (userOverride?: User) => {
+    const userToUse = userOverride || currentUser
+    if (!userToUse) {
+      console.log('loadUsers: No current user, skipping')
+      return
+    }
+
+    if (isLoadingUsers) {
+      console.log('loadUsers: Already loading, skipping duplicate call')
+      return
+    }
+
+    console.log('loadUsers: Starting user load')
+    setIsLoadingUsers(true)
+    setLoadingUsers(true)
+
+    // Таймаут для предотвращения бесконечной загрузки
+    const timeoutId = setTimeout(() => {
+      console.warn('User loading timeout - forcing stop loading')
+      setLoadingUsers(false)
+    }, 10000) // 10 секунд таймаут
 
     try {
-      const response = await fetch('/api/users')
-      const data = await response.json()
+      const controller = new AbortController()
+      const timeoutId2 = setTimeout(() => controller.abort(), 8000) // 8 секунд на запрос
 
-      if (response.ok) {
-        // Фильтруем текущего пользователя из списка
-        const filteredUsers = (data.users || []).filter((user: User) => user.id !== currentUser.id)
+      console.log('Starting users fetch...')
+
+      const response = await fetch('/api/users', {
+        signal: controller.signal,
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      })
+
+      clearTimeout(timeoutId2)
+      console.log('Users fetch completed with status:', response.status)
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      console.log('Users data received:', { usersCount: data.users?.length || 0, hasError: !!data.error })
+
+      if (data.users) {
+        // Сохраняем всех пользователей
+        setAllUsers(data.users)
+
+        // Фильтруем текущего пользователя и контакты из списка
+        const filteredUsers = data.users.filter((user: User) =>
+          user.id !== userToUse.id && !contacts.includes(user.id)
+        )
+        console.log('All users count:', data.users.length, 'Filtered users count:', filteredUsers.length)
         setUsers(filteredUsers)
       } else {
-        console.error('Error loading users:', data.error)
+        console.warn('No users data received, setting empty list')
+        setUsers([])
       }
     } catch (error) {
       console.error('Error loading users:', error)
+      // В случае ошибки показываем пустой список
+      setUsers([])
+
+      if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') {
+        console.warn('Request was aborted due to timeout')
+      }
+    } finally {
+      clearTimeout(timeoutId)
+      setLoadingUsers(false)
+      setIsLoadingUsers(false)
+      console.log('loadUsers: Finished loading')
     }
   }
 
   useEffect(() => {
-    // Инициализация пользователя и каналов
+    // Предотвращаем повторную инициализацию
+    if (initCompletedRef.current) {
+      console.log('initApp: Already initialized, skipping')
+      return
+    }
+
+    // Инициализация пользователя и каналов - запускается только один раз при монтировании
     const initApp = async () => {
+      console.log('initApp: Starting initialization')
+
+      // Ждем небольшую задержку для стабильности
+      await new Promise(resolve => setTimeout(resolve, 100))
+
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
+        console.log('initApp: No authenticated user found, redirecting to login')
         router.push('/login')
         return
       }
@@ -124,6 +197,28 @@ export default function AudioCallPage() {
         }
       }
 
+      // Загружаем профиль пользователя
+      const { data: userProfile, error: userProfileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
+
+      let currentUserData = null
+      if (!userProfileError && userProfile) {
+        console.log('initApp: Setting current user profile')
+        currentUserData = {
+          id: userProfile.id,
+          email: userProfile.email,
+          display_name: userProfile.display_name,
+          avatar_url: userProfile.avatar_url,
+          created_at: userProfile.created_at,
+          updated_at: userProfile.updated_at,
+          online: true
+        }
+        setCurrentUser(currentUserData)
+      }
+
       // Загружаем контакты из localStorage
       const savedContacts = localStorage.getItem('audioCallContacts')
       if (savedContacts) {
@@ -134,10 +229,20 @@ export default function AudioCallPage() {
         }
       }
 
+      // Небольшая задержка для стабильности
+      await new Promise(resolve => setTimeout(resolve, 300))
+
       // Загружаем список всех пользователей
-      if (currentUser) {
-        await loadUsers()
+      console.log('initApp: Loading users')
+      if (currentUserData) {
+        await loadUsers(currentUserData)
+      } else {
+        console.warn('initApp: No user profile available for loading users')
       }
+
+      // Отмечаем завершение инициализации
+      initCompletedRef.current = true
+      console.log('initApp: Initialization completed')
     }
 
     initApp()
@@ -183,11 +288,14 @@ export default function AudioCallPage() {
     return () => {
       webrtcServiceRef.current?.disconnect()
     }
-  }, [router, supabase])
+  }, [router, supabase]) // Инициализация запускается только один раз при монтировании
 
   // Синхронизация онлайн статуса с Supabase
   useEffect(() => {
-    if (!currentUser) return
+    if (!currentUser) {
+      console.log('Online status effect: No current user, skipping')
+      return
+    }
 
     const updateOnlineStatus = async () => {
       try {
@@ -207,8 +315,8 @@ export default function AudioCallPage() {
     // Обновляем статус сразу при загрузке
     updateOnlineStatus()
 
-    // И затем каждые 2 минуты
-    const interval = setInterval(updateOnlineStatus, 2 * 60 * 1000) // 2 минуты
+    // И затем каждые 30 секунд
+    const interval = setInterval(updateOnlineStatus, 30 * 1000) // 30 секунд
 
     // Также обновляем при активности пользователя
     let activityTimeout: NodeJS.Timeout
@@ -238,7 +346,10 @@ export default function AudioCallPage() {
 
   // Realtime обновление статуса пользователей
   useEffect(() => {
-    if (!currentUser) return
+    if (!currentUser) {
+      console.log('Realtime effect: No current user, skipping')
+      return
+    }
 
     // Подписка на изменения в таблице profiles для реального времени
     const profilesChannel = supabase
@@ -253,7 +364,7 @@ export default function AudioCallPage() {
         // Если изменился профиль текущего пользователя, обновляем его данные
         if (payload.new && typeof payload.new === 'object' && 'id' in payload.new && payload.new.id === currentUser.id) {
           console.log('Current user profile updated:', payload.new)
-          const profileData = payload.new as any
+          const profileData = payload.new as User
           setCurrentUser({
             id: profileData.id || currentUser.id,
             email: profileData.email || currentUser.email,
@@ -267,10 +378,10 @@ export default function AudioCallPage() {
 
         // Обновляем статус пользователя в списке в реальном времени
         setUsers(prevUsers => {
-          const updatedUser = payload.new as any
+          const updatedUser = payload.new as User
 
           // Если это текущий пользователь, пропускаем (он не должен быть в списке)
-          if (updatedUser.id === currentUser.id) {
+          if (currentUser && updatedUser.id === currentUser.id) {
             return prevUsers
           }
 
@@ -284,7 +395,7 @@ export default function AudioCallPage() {
               display_name: updatedUser.display_name || newUsers[existingUserIndex].display_name,
               avatar_url: updatedUser.avatar_url || newUsers[existingUserIndex].avatar_url,
               last_seen: updatedUser.last_seen || newUsers[existingUserIndex].last_seen,
-              online: isUserOnline(updatedUser.last_seen)
+              online: isUserOnline(updatedUser.last_seen || null)
             }
             return newUsers
           } else {
@@ -297,7 +408,7 @@ export default function AudioCallPage() {
               last_seen: updatedUser.last_seen,
               created_at: updatedUser.created_at,
               updated_at: updatedUser.updated_at,
-              online: isUserOnline(updatedUser.last_seen)
+              online: isUserOnline(updatedUser.last_seen || null)
             }]
           }
         })
@@ -306,7 +417,10 @@ export default function AudioCallPage() {
 
     // Также обновляем статусы каждые 30 секунд для надежности
     const usersUpdateInterval = setInterval(() => {
-      loadUsers()
+      // Не запускаем загрузку, если уже идет загрузка
+      if (!isLoadingUsers && currentUser) {
+        loadUsers()
+      }
     }, 30 * 1000) // 30 секунд
 
     return () => {
@@ -430,9 +544,21 @@ export default function AudioCallPage() {
     localStorage.setItem('audioCallContacts', JSON.stringify(newContacts))
   }
 
+  // Автоматическая фильтрация пользователей при изменении контактов
+  React.useEffect(() => {
+    if (allUsers.length > 0 && currentUser) {
+      const filteredUsers = allUsers.filter((user: User) =>
+        user.id !== currentUser.id && !contacts.includes(user.id)
+      )
+      setUsers(filteredUsers)
+      console.log('Auto-filtered users count:', filteredUsers.length)
+    }
+  }, [contacts, allUsers, currentUser])
+
   const handleEndCall = async () => {
     await webrtcServiceRef.current?.endCall()
     setTargetUserId('')
+    setCallState('idle')
   }
 
   const handleLogout = async () => {
@@ -626,7 +752,14 @@ export default function AudioCallPage() {
   return (
     <div className="min-h-screen bg-[#1A1A1D] text-white relative">
       {/* Animated background */}
-      <div className="fixed inset-0 z-0">
+      <div className="fixed inset-0 z-0" style={{
+        width: '100vw',
+        height: '100vh',
+        willChange: 'transform',
+        backfaceVisibility: 'hidden',
+        transform: 'translateZ(0)',
+        contain: 'layout style paint'
+      }}>
         <FloatingLines
           enabledWaves={['top', 'middle', 'bottom']}
           lineCount={[10, 15, 20]}
@@ -665,6 +798,7 @@ export default function AudioCallPage() {
         onRejectCall={() => {
           webrtcServiceRef.current?.endCall()
           setIncomingCallerId(null)
+          setCallState('idle')
         }}
         onStartCall={handleStartCall}
         onEndCall={handleEndCall}
@@ -679,7 +813,9 @@ export default function AudioCallPage() {
       {callState === 'idle' && (
         <UserList
           users={users}
+          allUsers={allUsers}
           contacts={contacts}
+          loading={loadingUsers}
           onStartCall={handleStartCall}
           onAddContact={addContactToList}
           onRemoveContact={removeContact}

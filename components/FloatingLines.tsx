@@ -106,7 +106,7 @@ vec3 getLineColor(float t, vec3 baseColor) {
 
   float x_offset   = offset;
   float x_movement = time * 0.1;
-  float amp        = 0.3; // Fixed amplitude for continuous flow
+  float amp        = 0.3 + 0.1 * sin(time * 0.5); // Smooth amplitude variation for infinite flow
   float y          = sin(uv.x * 2.0 + x_offset + x_movement) * amp;
 
   if (shouldBend) {

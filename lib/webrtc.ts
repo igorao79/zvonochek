@@ -37,6 +37,11 @@ export class WebRTCService {
   private onLocalStream?: (stream: MediaStream) => void
   private onError?: (error: string) => void
 
+  // Звуки для звонков
+  private ringtoneAudio: HTMLAudioElement | null = null
+  private endCallAudio: HTMLAudioElement | null = null
+  private isRingtonePlaying = false
+
   // Кэш каналов для отправки сигналов
   private sendChannels: Map<string, RealtimeChannel> = new Map()
 
@@ -50,6 +55,8 @@ export class WebRTCService {
     // Инициализация канала будет выполнена позже при первом использовании
     // Настраиваем обработчики завершения звонка
     this.setupCallTerminationHandlers()
+    // Инициализируем звуки
+    this.initializeSounds()
   }
 
   // Инициализация канала только для получения сигналов
@@ -107,6 +114,88 @@ export class WebRTCService {
     this.onError = callbacks.onError
   }
 
+  // Инициализация звуков для звонков
+  async initializeSounds() {
+    try {
+      // Загружаем рингтон
+      const { data: ringtoneData } = await this.supabase.storage
+        .from('sounds')
+        .getPublicUrl('ringtone.mp3')
+
+      if (ringtoneData?.publicUrl) {
+        this.ringtoneAudio = new Audio(ringtoneData.publicUrl)
+        this.ringtoneAudio.loop = true
+        this.ringtoneAudio.volume = 0.3
+      }
+
+      // Загружаем звук окончания звонка
+      const { data: endCallData } = await this.supabase.storage
+        .from('sounds')
+        .getPublicUrl('endcall.mp3')
+
+      if (endCallData?.publicUrl) {
+        this.endCallAudio = new Audio(endCallData.publicUrl)
+        this.endCallAudio.volume = 0.7
+      }
+
+      console.log('🔊 Sounds initialized successfully')
+    } catch (error) {
+      console.error('❌ Error initializing sounds:', error)
+    }
+  }
+
+  // Воспроизведение рингтона
+  playRingtone() {
+    if (this.ringtoneAudio && !this.isRingtonePlaying) {
+      this.isRingtonePlaying = true
+      this.ringtoneAudio.currentTime = 0
+      this.ringtoneAudio.play().catch(err => {
+        console.error('❌ Error playing ringtone:', err)
+        this.isRingtonePlaying = false
+      })
+    }
+  }
+
+  // Остановка рингтона
+  stopRingtone() {
+    if (this.ringtoneAudio && this.isRingtonePlaying) {
+      this.ringtoneAudio.pause()
+      this.ringtoneAudio.currentTime = 0
+      this.isRingtonePlaying = false
+    }
+  }
+
+  // Воспроизведение звука окончания звонка
+  playEndCallSound() {
+    if (this.endCallAudio) {
+      this.endCallAudio.currentTime = 0
+      this.endCallAudio.play().catch(err => {
+        console.error('❌ Error playing end call sound:', err)
+      })
+    }
+  }
+
+  // Обработка завершения звонка от удаленного пользователя (без отправки сигнала обратно)
+  handleRemoteEndCall() {
+    console.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Handling remote end call - current state: isCallActive=${this.isCallActive}, targetUserId=${this.targetUserId?.slice(0, 8)}`)
+
+    // Останавливаем рингтон и проигрываем звук окончания звонка
+    this.stopRingtone()
+    this.playEndCallSound()
+
+    // Очищаем соединение без отправки сигнала
+    this.isCallActive = false
+    this.targetUserId = null
+    this.incomingCallerId = null
+    this.cleanup()
+
+    // Устанавливаем состояние idle
+    this.onStateChange?.('idle')
+
+    // Показываем сообщение пользователю
+    this.onError?.('Звонок завершен собеседником')
+  }
+
   async startCall(targetUserId: string) {
     if (this.peer && !this.peer.destroyed) {
       console.log('⚠️ Call already in progress, ignoring start call request')
@@ -128,6 +217,9 @@ export class WebRTCService {
       return
     }
 
+    // Останавливаем рингтон при принятии звонка
+    this.stopRingtone()
+
     // Инициализируем канал только при ответе на звонок
     await this.initializeSupabaseChannel()
 
@@ -138,6 +230,14 @@ export class WebRTCService {
   }
 
   async endCall() {
+    console.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Ending call - targetUserId: ${this.targetUserId?.slice(0, 8)}, isCallActive: ${this.isCallActive}`)
+
+    // Останавливаем рингтон если он играет
+    this.stopRingtone()
+
+    // Проигрываем звук окончания звонка
+    this.playEndCallSound()
+
     // Отправляем сигнал завершения через Supabase канал
     if (this.targetUserId) {
       try {
@@ -149,7 +249,7 @@ export class WebRTCService {
           type: 'broadcast',
           event: 'webrtc_signal',
           payload: {
-            signal: { type: 'end-call' },
+            type: 'end-call',
             from: this.currentUserId
           }
         })
@@ -267,6 +367,12 @@ export class WebRTCService {
 
       // Обработчик ошибок
       this.peer.on('error', (err: Error) => {
+        // Игнорируем ошибку User-Initiated Abort, так как это нормальное завершение звонка
+        if (err.message.includes('User-Initiated Abort')) {
+          console.log('Peer connection closed by user')
+          return
+        }
+
         console.error('Peer error:', err)
         this.onError?.(`Ошибка соединения: ${err.message}`)
         this.cleanup()
@@ -315,6 +421,9 @@ export class WebRTCService {
   }
 
   private cleanup() {
+    // Останавливаем все звуки
+    this.stopRingtone()
+
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => {
         try {
@@ -547,8 +656,7 @@ export class WebRTCService {
     // Обработка специальных сигналов (не WebRTC)
     if (type === 'end-call') {
       console.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received end call signal from ${from.slice(0, 8)}`)
-      this.endCall()
-      this.onError?.('Звонок завершен собеседником')
+      this.handleRemoteEndCall()
       return
     }
 
@@ -560,6 +668,9 @@ export class WebRTCService {
       this.incomingCallerId = from
       this.targetUserId = from
       this.onStateChange?.('receiving')
+
+      // Запускаем рингтон для входящего звонка
+      this.playRingtone()
 
       // Для offer сигнала - НЕ инициализируем peer автоматически!
       // Peer будет создан только после явного принятия звонка через answerCall()
@@ -622,10 +733,12 @@ export class WebRTCService {
         }
       } else {
         // Peer не готов - буферизуем сигнал (только WebRTC сигналы)
-        if (signal && type !== 'end-call') {
+        if (signal && type && type !== 'end-call') {
           console.log(`📦 Buffering ${type} signal from ${from.slice(0, 8)} (peer not ready)`)
           this.refs.signalBufferRef.current.push({ type, signal: signal as SimplePeer.SignalData, from })
           console.log(`📦 Buffer size: ${this.refs.signalBufferRef.current.length}`)
+        } else if (!type || type === 'undefined') {
+          console.warn(`⚠️ Ignoring invalid signal with type: ${type} from ${from.slice(0, 8)}`)
         }
       }
     } else {
@@ -642,7 +755,7 @@ export class WebRTCService {
     if (bufferedSignals.length > 0 && this.peer && !this.peer.destroyed) {
       console.log(`🔄 Processing ${bufferedSignals.length} buffered signals`)
 
-      bufferedSignals.forEach(({ type, signal, from }: { type: string, signal?: any, from: string }, index: number) => {
+      bufferedSignals.forEach(({ type, signal, from }: { type: string, signal?: SimplePeer.SignalData, from: string }, index: number) => {
         try {
           if (signal) {
             console.log(`🔄 Processing buffered signal ${index + 1}/${bufferedSignals.length}: ${type} from ${from.slice(0, 8)}`)
@@ -668,7 +781,7 @@ export class WebRTCService {
     return this.localStream
   }
 
-  async sendSignal(data: { type: string, from: string, to: string, signal?: any }) {
+  async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData }) {
     try {
       if (this.peer?.destroyed) {
         console.log('Peer destroyed, not sending signal')

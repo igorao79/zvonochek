@@ -5,7 +5,7 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin', 'cyrillic'] })
 
 export const metadata: Metadata = {
-  title: 'Видеозвонки WebRTC',
+  title: 'Звоночек',
   description: 'Приложение для видеозвонков на базе WebRTC и Supabase',
   icons: {
     icon: '/images/favicon.ico',

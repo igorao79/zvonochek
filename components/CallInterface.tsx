@@ -39,35 +39,35 @@ export default function CallInterface({
   const callerUser = users.find(u => u.id === incomingCallerId)
 
   return (
-    <div className="max-w-4xl mx-auto mb-8">
-      <div className={`relative p-6 rounded-2xl backdrop-blur-lg border-2 transition-all ${
+    <div className="max-w-4xl mx-auto mb-6 sm:mb-8">
+      <div className={`relative p-4 sm:p-6 rounded-2xl backdrop-blur-lg border-2 transition-all ${
       callState === 'idle' ? 'bg-[#4E4E50]/10 border-[#4E4E50]/20' :
       callState === 'calling' ? 'bg-[#950740]/20 border-[#950740]' :
       callState === 'receiving' ? 'bg-[#C3073F]/20 border-[#C3073F]' :
       'bg-[#6F2232]/20 border-[#6F2232]'
       }`}>
-        <div className="flex items-center justify-center gap-6 relative z-10">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 relative z-10">
           {/* Левая сторона - пользователь */}
-          <div className="flex items-center gap-3">
-            <div className={`w-12 h-12 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 relative ${
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className={`w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 relative ${
               callState === 'connected' && voiceActivity.local ? 'ring-4 ring-[#C3073F] animate-pulse' : ''
             }`}>
               {currentUser?.avatar_url ? (
                 <Image
                   src={currentUser.avatar_url}
                   alt="Your avatar"
-                  width={48}
-                  height={48}
+                  width={40}
+                  height={40}
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <span className="text-lg text-white">
+                <span className="text-sm sm:text-lg text-white">
                   {currentUser?.display_name?.charAt(0).toUpperCase() || currentUser?.email?.charAt(0).toUpperCase()}
                 </span>
               )}
             </div>
-            <div className="text-left">
-              <p className="font-medium text-sm">
+            <div className="text-left hidden xs:block">
+              <p className="font-medium text-xs sm:text-sm">
                 {currentUser?.display_name || currentUser?.email?.split('@')[0] || 'Вы'}
               </p>
               <p className="text-xs text-gray-400">
@@ -221,8 +221,8 @@ export default function CallInterface({
           </div>
 
           {/* Правая сторона - собеседник */}
-          <div className="flex items-center gap-3">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 relative ${
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 relative ${
               callState === 'connected' ? (voiceActivity.local || voiceActivity.remote ? 'ring-4 ring-[#C3073F] animate-pulse' : 'ring-2 ring-[#6F2232]') : ''
             }`}>
               {callState === 'idle' && (
@@ -274,8 +274,8 @@ export default function CallInterface({
                 )
               )}
             </div>
-            <div className="text-right">
-              <p className="font-medium text-sm">
+            <div className="text-right hidden xs:block">
+              <p className="font-medium text-xs sm:text-sm">
                 {callState === 'idle' && 'Собеседник'}
                 {callState === 'calling' && (targetUser?.display_name || 'Собеседник')}
                 {callState === 'receiving' && `От ${callerUser?.display_name || incomingCallerId?.slice(0, 8)}...`}
@@ -293,45 +293,45 @@ export default function CallInterface({
 
         {/* Кнопки управления - только для активных звонков */}
         {callState !== 'idle' && (
-          <div className="mt-6 flex justify-center gap-4">
+          <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
             {callState === 'receiving' && (
               <>
                   <button
                     onClick={onAcceptCall}
-                    className="cursor-pointer bg-gradient-to-r from-[#6F2232] to-[#950740] hover:from-[#950740] hover:to-[#C3073F] px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 shadow-lg shadow-[#6F2232]/50"
+                    className="cursor-pointer bg-gradient-to-r from-[#6F2232] to-[#950740] hover:from-[#950740] hover:to-[#C3073F] px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-[#6F2232]/50 text-sm sm:text-base"
                   >
-                  <FiPhone className="w-5 h-5" />
+                  <FiPhone className="w-4 h-4 sm:w-5 sm:h-5" />
                   Ответить
                 </button>
                   <button
                     onClick={onRejectCall}
-                    className="cursor-pointer bg-gradient-to-r from-[#4E4E50] to-[#6F2232] hover:from-[#6F2232] hover:to-[#950740] px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 shadow-lg shadow-[#4E4E50]/50"
+                    className="cursor-pointer bg-gradient-to-r from-[#4E4E50] to-[#6F2232] hover:from-[#6F2232] hover:to-[#950740] px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-[#4E4E50]/50 text-sm sm:text-base"
                   >
-                  <MdCallEnd className="w-5 h-5" />
+                  <MdCallEnd className="w-4 h-4 sm:w-5 sm:h-5" />
                   Отклонить
                 </button>
               </>
             )}
 
             {(callState === 'calling' || callState === 'connected') && (
-              <div className="flex gap-4">
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full sm:w-auto">
                   <button
                     onClick={onToggleMute}
                     className={`cursor-pointer ${
                       isMuted
                         ? 'bg-[#950740]/20 hover:bg-[#950740]/30 border-[#950740]'
                         : 'bg-[#4E4E50]/10 hover:bg-[#4E4E50]/20 border-[#4E4E50]/30'
-                    } border-2 px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 backdrop-blur-lg`}
+                    } border-2 px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 backdrop-blur-lg text-sm sm:text-base`}
                   >
-                  {isMuted ? <FiMicOff className="text-xl" /> : <FiMic className="text-xl" />}
+                  {isMuted ? <FiMicOff className="text-lg sm:text-xl" /> : <FiMic className="text-lg sm:text-xl" />}
                   {isMuted ? 'Включить' : 'Выключить'}
                 </button>
 
                   <button
                     onClick={onEndCall}
-                    className="cursor-pointer bg-gradient-to-r from-[#4E4E50] to-[#6F2232] hover:from-[#6F2232] hover:to-[#950740] px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 shadow-lg shadow-[#4E4E50]/50"
+                    className="cursor-pointer bg-gradient-to-r from-[#4E4E50] to-[#6F2232] hover:from-[#6F2232] hover:to-[#950740] px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 shadow-lg shadow-[#4E4E50]/50 text-sm sm:text-base"
                   >
-                  <MdCallEnd className="w-5 h-5" />
+                  <MdCallEnd className="w-4 h-4 sm:w-5 sm:h-5" />
                   Завершить
                 </button>
               </div>

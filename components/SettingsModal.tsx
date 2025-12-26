@@ -1,9 +1,11 @@
 'use client'
 
 import { createPortal } from 'react-dom'
+import { useState } from 'react'
 import Image from 'next/image'
 import { User } from '@/lib/types'
 import { FiX, FiUpload } from 'react-icons/fi'
+import { createClient } from '@/lib/supabase/client'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -28,36 +30,76 @@ export default function SettingsModal({
   onAvatarSelect,
   onSave
 }: SettingsModalProps) {
+  const [displayNameExists, setDisplayNameExists] = useState(false)
+  const supabase = createClient()
+
+  // Валидация display name
+  const validateDisplayName = async (name: string, currentUserId?: string) => {
+    if (!name || !currentUserId) return false
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('display_name', name)
+        .neq('id', currentUserId) // Исключаем текущего пользователя
+        .single()
+
+      if (error && error.code !== 'PGRST116') { // PGRST116 = not found
+        console.error('Error checking display name:', error)
+        return false
+      }
+
+      setDisplayNameExists(!!data)
+      return !data // true если display name свободен
+    } catch (err) {
+      console.error('Display name validation error:', err)
+      return false
+    }
+  }
+
+  // Валидация при изменении display name
+  const handleDisplayNameChange = async (value: string) => {
+    onDisplayNameChange(value)
+    if (value && user?.id) {
+      // Небольшая задержка перед валидацией
+      setTimeout(() => {
+        validateDisplayName(value, user.id)
+      }, 300)
+    } else {
+      setDisplayNameExists(false)
+    }
+  }
   if (!isOpen) return null
 
   return createPortal(
     <div
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4"
       onClick={onClose}
     >
       <div
-          className="bg-[#1A1A1D] rounded-xl border border-[#4E4E50]/30 shadow-2xl max-w-md w-full max-h-[85vh] overflow-y-auto"
+          className="bg-[#1A1A1D] rounded-xl border border-[#4E4E50]/30 shadow-2xl max-w-md w-full max-h-[90vh] sm:max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-                <div className="p-4 border-b border-[#4E4E50]/20">
+                <div className="p-3 sm:p-4 border-b border-[#4E4E50]/20">
           <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold text-white">Настройки профиля</h2>
+            <h2 className="text-lg sm:text-xl font-bold text-white">Настройки профиля</h2>
                     <button
                       onClick={onClose}
                       className="cursor-pointer text-[#4E4E50] hover:text-[#C3073F] transition"
                     >
-              <FiX className="w-6 h-6" />
+              <FiX className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
           </div>
         </div>
 
         {/* Modal Content */}
-        <div className="p-4">
+        <div className="p-3 sm:p-4">
           {/* Avatar Section */}
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-white mb-3">Аватар</h3>
-            <div className="flex items-center gap-4">
+          <div className="mb-4 sm:mb-6">
+            <h3 className="text-base sm:text-lg font-semibold text-white mb-3">Аватар</h3>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
               <div className="relative">
                         <div className="w-16 h-16 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden">
                   {user?.avatar_url ? (
@@ -80,16 +122,16 @@ export default function SettingsModal({
                   </div>
                 )}
               </div>
-              <div>
+              <div className="w-full sm:w-auto">
                 <button
                   onClick={onAvatarSelect}
                   disabled={uploading}
-                          className="cursor-pointer bg-[#950740] hover:bg-[#C3073F] px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed text-white"
+                          className="cursor-pointer w-full sm:w-auto bg-[#950740] hover:bg-[#C3073F] px-3 sm:px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm"
                 >
-                  <FiUpload className="w-4 h-4 inline mr-2" />
+                  <FiUpload className="w-3 h-3 sm:w-4 sm:h-4 inline mr-2" />
                   {uploading ? 'Загрузка...' : 'Изменить аватар'}
                 </button>
-                <p className="text-sm text-gray-400 mt-2">
+                <p className="text-xs sm:text-sm text-gray-400 mt-2">
                   Максимальный размер: 2MB<br />
                   Форматы: JPG, PNG, GIF
                 </p>
@@ -117,11 +159,18 @@ export default function SettingsModal({
               <input
                 type="text"
                 value={displayName}
-                onChange={(e) => onDisplayNameChange(e.target.value)}
+                onChange={(e) => handleDisplayNameChange(e.target.value)}
                 placeholder="Как вас будут видеть другие пользователи"
-                        className="w-full px-3 py-2 bg-[#4E4E50]/20 border border-[#4E4E50]/30 rounded-lg focus:ring-2 focus:ring-[#950740] focus:border-transparent backdrop-blur-lg text-white placeholder-gray-400 text-sm"
+                        className={`w-full px-3 py-2 bg-[#4E4E50]/20 border rounded-lg focus:ring-2 backdrop-blur-lg text-white placeholder-gray-400 text-sm ${
+                          displayName && displayNameExists
+                            ? 'border-red-500 focus:ring-red-500 focus:border-red-500'
+                            : 'border-[#4E4E50]/30 focus:ring-[#950740] focus:border-[#950740]'
+                        }`}
                 maxLength={50}
               />
+              {displayName && displayNameExists && (
+                <p className="text-red-400 text-xs mt-1">Это имя уже используется</p>
+              )}
               <p className="text-xs text-gray-400 mt-1">
                 Это имя будет видно другим пользователям в списке контактов
               </p>
@@ -130,11 +179,11 @@ export default function SettingsModal({
           </div>
 
           {/* Modal Actions */}
-          <div className="mt-6 flex gap-3">
+          <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row gap-3">
             <button
               onClick={onSave}
-              disabled={saving || !displayName.trim()}
-                      className="cursor-pointer flex-1 bg-gradient-to-r from-[#6F2232] to-[#950740] hover:from-[#950740] hover:to-[#C3073F] px-4 py-2 rounded-lg font-semibold transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm"
+              disabled={saving || !displayName.trim() || displayNameExists}
+                      className="cursor-pointer flex-1 bg-gradient-to-r from-[#6F2232] to-[#950740] hover:from-[#950740] hover:to-[#C3073F] px-3 sm:px-4 py-2 rounded-lg font-semibold transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm order-2 sm:order-1"
             >
               {saving ? (
                 <>
@@ -147,7 +196,7 @@ export default function SettingsModal({
             </button>
             <button
               onClick={onClose}
-              className="cursor-pointer bg-[#4E4E50] hover:bg-[#6F2232] px-4 py-2 rounded-lg font-semibold transition text-white text-sm"
+              className="cursor-pointer bg-[#4E4E50] hover:bg-[#6F2232] px-3 sm:px-4 py-2 rounded-lg font-semibold transition text-white text-sm order-1 sm:order-2"
             >
               Отмена
             </button>

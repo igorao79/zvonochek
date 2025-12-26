@@ -85,10 +85,10 @@ export async function GET() {
       .eq('id', user.id)
       .single()
 
-    // Определяем онлайн статус на основе last_seen (последние 5 минут)
-    const ONLINE_THRESHOLD_MINUTES = 5
+    // Определяем онлайн статус на основе last_seen (последние 1 минуту)
+    const ONLINE_THRESHOLD_SECONDS = 60
     const now = new Date()
-    const onlineThreshold = new Date(now.getTime() - ONLINE_THRESHOLD_MINUTES * 60 * 1000)
+    const onlineThreshold = new Date(now.getTime() - ONLINE_THRESHOLD_SECONDS * 1000)
 
     const usersWithStatus = (users || []).map(user => ({
       ...user,
@@ -109,7 +109,7 @@ export async function GET() {
       debug: {
         currentUser: user.email,
         totalUsers: usersWithStatus.length,
-        onlineThreshold: `${ONLINE_THRESHOLD_MINUTES} minutes`
+        onlineThreshold: `${ONLINE_THRESHOLD_SECONDS} seconds`
       }
     })
   } catch (error) {
