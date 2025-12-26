@@ -24,3 +24,10 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes wifiAnimation {
+  0% { opacity: 0.4 }
+  5% { opacity: 1 }
+  6% { opacity: 0.1 }
+  100% { opacity: 0.1; }
+}
