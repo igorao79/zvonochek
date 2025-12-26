@@ -4,7 +4,7 @@ export type CallSignal = {
   type: 'offer' | 'answer' | 'ice-candidate' | 'end-call'
   from: string
   to: string
-  signal?: SignalData
+  signal?: any
   candidate?: RTCIceCandidate
 }
 
@@ -14,8 +14,8 @@ export type User = {
   id: string
   email: string
   display_name?: string
-  full_name?: string
   avatar_url?: string
+  last_seen?: string
   created_at?: string
   updated_at?: string
   online?: boolean

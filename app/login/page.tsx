@@ -120,7 +120,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            className="cursor-pointer w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Загрузка...' : isSignUp ? 'Зарегистрироваться' : 'Войти'}
           </button>
@@ -129,7 +129,7 @@ export default function LoginPage() {
         <div className="mt-6 text-center">
           <button
             onClick={() => setIsSignUp(!isSignUp)}
-            className="text-indigo-600 hover:text-indigo-700 font-medium text-sm"
+            className="cursor-pointer text-indigo-600 hover:text-indigo-700 font-medium text-sm"
           >
             {isSignUp ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться'}
           </button>

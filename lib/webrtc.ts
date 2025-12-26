@@ -561,25 +561,10 @@ export class WebRTCService {
       this.targetUserId = from
       this.onStateChange?.('receiving')
 
-      // Для offer сигнала - сразу инициализируем peer как receiver
-      // Проверяем что мы не инициализируем повторно
-      if (!this.peer && !this.refs.peerRef.current) {
-        console.log(`🎯 [User ${this.currentUserId.slice(0, 8)}] Auto-initializing peer as receiver on offer signal`)
-        // Небольшая задержка для обработки UI и предотвращения race conditions
-        setTimeout(() => {
-          if (!this.peer && !this.refs.peerRef.current && this.targetUserId === from) {
-            console.log(`✅ [User ${this.currentUserId.slice(0, 8)}] Confirmed auto-initialization as receiver`)
-            this.isCallActive = true
-            this.initializePeer(false).catch(err => {
-              console.error('Error auto-initializing peer:', err)
-            })
-          } else {
-            console.log(`❌ [User ${this.currentUserId.slice(0, 8)}] Auto-initialization cancelled - peer exists or target changed`)
-          }
-        }, 200) // Увеличиваем задержку
-      } else {
-        console.log(`⚠️ [User ${this.currentUserId.slice(0, 8)}] Peer already exists, skipping auto-initialization`)
-      }
+      // Для offer сигнала - НЕ инициализируем peer автоматически!
+      // Peer будет создан только после явного принятия звонка через answerCall()
+      console.log(`🎯 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)} - waiting for user acceptance`)
+      this.isCallActive = false
     }
 
       // Если peer готов, обрабатываем сигнал
@@ -651,13 +636,13 @@ export class WebRTCService {
     }
   }
 
-  private processBufferedSignals() {
+  processBufferedSignals() {
     const bufferedSignals = this.refs.signalBufferRef.current
 
     if (bufferedSignals.length > 0 && this.peer && !this.peer.destroyed) {
       console.log(`🔄 Processing ${bufferedSignals.length} buffered signals`)
 
-      bufferedSignals.forEach(({ type, signal, from }, index) => {
+      bufferedSignals.forEach(({ type, signal, from }: { type: string, signal?: any, from: string }, index: number) => {
         try {
           if (signal) {
             console.log(`🔄 Processing buffered signal ${index + 1}/${bufferedSignals.length}: ${type} from ${from.slice(0, 8)}`)
@@ -679,7 +664,11 @@ export class WebRTCService {
     return this.incomingCallerId
   }
 
-  private async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData }) {
+  getLocalStream(): MediaStream | null {
+    return this.localStream
+  }
+
+  async sendSignal(data: { type: string, from: string, to: string, signal?: any }) {
     try {
       if (this.peer?.destroyed) {
         console.log('Peer destroyed, not sending signal')

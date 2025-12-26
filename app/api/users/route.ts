@@ -60,8 +60,7 @@ export async function GET() {
     // Получаем всех пользователей из таблицы profiles
     const { data: users, error: usersError } = await supabase
       .from('profiles')
-      .select('id, email, display_name, full_name, avatar_url, created_at, updated_at')
-      .neq('id', user.id) // Исключаем текущего пользователя
+      .select('id, email, display_name, full_name, avatar_url, last_seen, created_at, updated_at')
       .order('created_at', { ascending: false })
 
     console.log('Users query result:', {
@@ -79,19 +78,38 @@ export async function GET() {
       }, { status: 500 })
     }
 
-    // Добавляем статус online (пока все считаем онлайн для демо)
+    // Получаем профиль текущего пользователя
+    const { data: currentUserProfile, error: currentUserError } = await supabase
+      .from('profiles')
+      .select('id, email, display_name, full_name, avatar_url, last_seen, created_at, updated_at')
+      .eq('id', user.id)
+      .single()
+
+    // Определяем онлайн статус на основе last_seen (последние 5 минут)
+    const ONLINE_THRESHOLD_MINUTES = 5
+    const now = new Date()
+    const onlineThreshold = new Date(now.getTime() - ONLINE_THRESHOLD_MINUTES * 60 * 1000)
+
     const usersWithStatus = (users || []).map(user => ({
       ...user,
-      online: true // В реальном приложении нужно отслеживать онлайн статус
+      online: user.last_seen ? new Date(user.last_seen) > onlineThreshold : false
     }))
+
+    // Добавляем текущего пользователя в список
+    const currentUserWithStatus = currentUserProfile ? {
+      ...currentUserProfile,
+      online: currentUserProfile.last_seen ? new Date(currentUserProfile.last_seen) > onlineThreshold : false
+    } : null
 
     console.log('Returning users:', usersWithStatus.length)
 
     return NextResponse.json({
       users: usersWithStatus,
+      currentUser: currentUserWithStatus,
       debug: {
         currentUser: user.email,
-        totalUsers: usersWithStatus.length
+        totalUsers: usersWithStatus.length,
+        onlineThreshold: `${ONLINE_THRESHOLD_MINUTES} minutes`
       }
     })
   } catch (error) {

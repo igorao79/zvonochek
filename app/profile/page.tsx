@@ -9,8 +9,6 @@ export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [displayName, setDisplayName] = useState('')
-  const [fullName, setFullName] = useState('')
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
@@ -22,37 +20,89 @@ export default function ProfilePage() {
 
   const loadProfile = async () => {
     try {
-      const { data: { user: authUser } } = await supabase.auth.getUser()
-      if (!authUser) {
+      console.log('🔄 Загрузка профиля...')
+
+      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
+      console.log('👤 Auth user:', {
+        user: authUser,
+        user_metadata: authUser?.user_metadata,
+        raw_user_meta_data: authUser?.app_metadata,
+        error: authError
+      })
+
+      if (authError || !authUser) {
+        console.log('❌ Пользователь не аутентифицирован')
         router.push('/login')
         return
       }
 
+      // Берем данные из auth.users raw_user_meta_data в первую очередь
+      // В Supabase raw_user_meta_data доступен как app_metadata
+      const displayNameFromAuth = authUser.app_metadata?.display_name ||
+                                 authUser.user_metadata?.display_name ||
+                                 authUser.user_metadata?.name
+
+      console.log('🔍 Данные из auth.users:', {
+        display_name: displayNameFromAuth,
+        app_metadata: authUser.app_metadata,
+        user_metadata: authUser.user_metadata,
+        source: displayNameFromAuth ? (authUser.app_metadata?.display_name ? 'app_metadata' : 'user_metadata') : 'none'
+      })
+
+      // Также проверяем таблицу profiles для дополнительных данных (аватар)
       const { data: profile, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', authUser.id)
         .single()
 
-      if (error && error.code !== 'PGRST116') { // PGRST116 = not found
-        throw error
-      }
+      console.log('📋 Профиль из таблицы profiles:', { profile, error })
 
-      const userData: User = profile || {
+      // Приоритет: auth.users метаданные, затем profiles таблица
+      const userData: User = {
         id: authUser.id,
         email: authUser.email || '',
-        display_name: '',
-        full_name: '',
-        avatar_url: '',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        display_name: displayNameFromAuth || profile?.display_name || '',
+        avatar_url: profile?.avatar_url || '',
+        created_at: profile?.created_at || authUser.created_at || new Date().toISOString(),
+        updated_at: profile?.updated_at || authUser.updated_at || new Date().toISOString()
+      }
+
+      // Если в auth.users нет метаданных, но в profiles есть - синхронизируем
+      if (!displayNameFromAuth && profile?.display_name) {
+        console.log('🔄 Синхронизация: копируем данные из profiles в auth.users metadata')
+        try {
+          await supabase.auth.updateUser({
+            data: {
+              display_name: profile.display_name
+            }
+          })
+          console.log('✅ Метаданные синхронизированы')
+        } catch (syncError) {
+          console.warn('⚠️ Не удалось синхронизировать метаданные:', syncError)
+        }
+      }
+
+      console.log('✅ Финальные данные пользователя:', {
+        id: userData.id,
+        email: userData.email,
+        display_name: userData.display_name,
+        source: displayNameFromAuth ? 'auth.users metadata' : profile ? 'profiles table' : 'default',
+        hasAuthMetadata: !!displayNameFromAuth,
+        hasProfile: !!profile
+      })
+
+      // Предупреждение если данные из разных источников
+      if (displayNameFromAuth && profile?.display_name && displayNameFromAuth !== profile.display_name) {
+        console.warn('⚠️ Несоответствие данных:', {
+          auth_metadata: displayNameFromAuth,
+          profiles_table: profile.display_name
+        })
       }
 
       setUser(userData)
-      setDisplayName(userData.display_name || '')
-      setFullName(userData.full_name || '')
     } catch (error) {
-      console.error('Error loading profile:', error)
+      console.error('❌ Error loading profile:', error)
       alert('Ошибка загрузки профиля')
     } finally {
       setLoading(false)
@@ -62,26 +112,136 @@ export default function ProfilePage() {
   const saveProfile = async () => {
     if (!user) return
 
+    console.log('🔄 Начинаем сохранение профиля:', {
+      id: user.id,
+      display_name: user.display_name,
+      avatar_url: user.avatar_url
+    })
+
     setSaving(true)
+
     try {
-      const { error } = await supabase
+      // Проверяем аутентификацию
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      console.log('🔐 Сессия:', { session: !!session, error: sessionError })
+
+      if (sessionError || !session) {
+        throw new Error('Пользователь не аутентифицирован')
+      }
+
+      // Проверяем, существует ли профиль
+      const { data: existingProfile, error: checkError } = await supabase
         .from('profiles')
-        .upsert({
-          id: user.id,
-          email: user.email,
-          display_name: displayName,
-          full_name: fullName,
+        .select('id, display_name')
+        .eq('id', user.id)
+        .single()
+
+      console.log('📋 Существующий профиль:', { data: existingProfile, error: checkError })
+
+      let result
+      if (existingProfile) {
+        // Профиль существует - обновляем
+        console.log('📝 Обновляем существующий профиль...')
+        result = await supabase
+          .from('profiles')
+        .update({
+          display_name: user.display_name?.trim() || '',
           avatar_url: user.avatar_url,
           updated_at: new Date().toISOString()
         })
+          .eq('id', user.id)
+          .select()
+      } else {
+        // Профиль не существует - создаем
+        console.log('🆕 Создаем новый профиль...')
+        result = await supabase
+          .from('profiles')
+          .insert({
+            id: user.id,
+            email: user.email,
+            display_name: user.display_name?.trim() || '',
+            avatar_url: user.avatar_url
+          })
+          .select()
+      }
 
-      if (error) throw error
+      console.log('💾 Результат сохранения:', { data: result.data, error: result.error })
 
-      alert('Профиль сохранен!')
-      router.push('/')
+      if (result.error) {
+        throw result.error
+      }
+
+      if (!result.data || result.data.length === 0) {
+        throw new Error('Данные не были сохранены')
+      }
+
+      // Проверяем, что данные действительно сохранились
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('profiles')
+        .select('display_name')
+        .eq('id', user.id)
+        .single()
+
+      console.log('✅ Проверка сохраненных данных:', { data: verifyData, error: verifyError })
+
+      if (verifyError) {
+        console.warn('⚠️ Не удалось проверить сохраненные данные:', verifyError)
+      } else if (verifyData.display_name !== (user.display_name?.trim() || '')) {
+        console.warn('⚠️ Display name не совпадает:', {
+          expected: user.display_name?.trim() || '',
+          actual: verifyData.display_name
+        })
+      }
+
+      // Также обновляем raw_user_meta_data в auth.users через RPC функцию
+      const { data: rpcResult, error: authUpdateError } = await supabase.rpc('update_user_metadata_admin', {
+        user_id: user.id,
+        display_name: user.display_name?.trim() || ''
+      })
+
+      console.log('🔄 RPC результат:', { data: rpcResult, error: authUpdateError })
+
+      if (authUpdateError) {
+        console.warn('⚠️ Не удалось обновить raw_user_meta_data через RPC:', authUpdateError)
+        // Попробуем updateUser как fallback
+        const { error: fallbackError } = await supabase.auth.updateUser({
+          data: {
+            display_name: user.display_name?.trim() || ''
+          }
+        })
+        if (fallbackError) {
+          console.warn('⚠️ Fallback (user_metadata) тоже не сработал:', fallbackError)
+        } else {
+          console.log('✅ user_metadata обновлены через fallback')
+        }
+      } else {
+        console.log('✅ raw_user_meta_data обновлены в auth.users через RPC')
+      }
+
+      // Обновляем локальное состояние
+      setUser({
+        ...user,
+        display_name: user.display_name?.trim() || ''
+      })
+
+      alert(`✅ Профиль успешно сохранен!\nОтображаемое имя: "${user.display_name?.trim() || ''}"`)
+
+      // Не переходим сразу, даем пользователю увидеть изменения
+      setTimeout(() => {
+        router.push('/')
+      }, 2000)
+
     } catch (error) {
-      console.error('Error saving profile:', error)
-      alert('Ошибка сохранения профиля')
+      console.error('❌ Ошибка сохранения профиля:', error)
+
+      let errorMessage = 'Неизвестная ошибка'
+      if (error instanceof Error) {
+        errorMessage = error.message
+      } else if (typeof error === 'object' && error !== null && 'message' in error) {
+        errorMessage = (error as any).message
+      }
+
+      alert(`❌ Ошибка сохранения профиля:\n${errorMessage}\n\nПроверьте консоль для подробностей.`)
     } finally {
       setSaving(false)
     }
@@ -166,7 +326,7 @@ export default function ProfilePage() {
           <p className="text-xl mb-4">Пользователь не найден</p>
           <button
             onClick={() => router.push('/login')}
-            className="bg-blue-500 hover:bg-blue-600 px-6 py-2 rounded-lg"
+            className="cursor-pointer bg-blue-500 hover:bg-blue-600 px-6 py-2 rounded-lg"
           >
             Войти
           </button>
@@ -182,7 +342,7 @@ export default function ProfilePage() {
         <h1 className="text-3xl font-bold">Настройки профиля</h1>
         <button
           onClick={() => router.push('/')}
-          className="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg transition"
+          className="cursor-pointer bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg transition"
         >
           Назад
         </button>
@@ -205,7 +365,7 @@ export default function ProfilePage() {
                     />
                   ) : (
                     <span className="text-3xl text-white">
-                      {displayName.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+                      {user.display_name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
                     </span>
                   )}
                 </div>
@@ -226,7 +386,7 @@ export default function ProfilePage() {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
-                  className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="cursor-pointer bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {uploading ? 'Загрузка...' : 'Изменить аватар'}
                 </button>
@@ -257,8 +417,8 @@ export default function ProfilePage() {
               </label>
               <input
                 type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
+                value={user.display_name || ''}
+                onChange={(e) => setUser({...user, display_name: e.target.value})}
                 placeholder="Как вас будут видеть другие пользователи"
                 className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-lg"
                 maxLength={50}
@@ -268,38 +428,30 @@ export default function ProfilePage() {
               </p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">Полное имя</label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Ваше полное имя (опционально)"
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-lg"
-                maxLength={100}
-              />
-            </div>
           </div>
 
           {/* Actions */}
           <div className="mt-8 flex gap-4">
             <button
               onClick={saveProfile}
-              disabled={saving || !displayName.trim()}
-              className="flex-1 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 px-6 py-3 rounded-lg font-semibold transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={saving || !user.display_name?.trim()}
+              className="cursor-pointer flex-1 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 px-6 py-3 rounded-lg font-semibold transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed relative"
             >
-              {saving ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  Сохранение...
-                </>
-              ) : (
-                'Сохранить изменения'
+              {saving && (
+                <div className="absolute inset-0 bg-green-600/20 rounded-lg animate-pulse flex items-center justify-center">
+                  <div className="flex items-center gap-2 text-white">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span className="text-sm">Отправка в Supabase...</span>
+                  </div>
+                </div>
               )}
+              <span className={saving ? 'opacity-50' : ''}>
+                Сохранить изменения
+              </span>
             </button>
             <button
               onClick={() => router.push('/')}
-              className="bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition"
+              className="cursor-pointer bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition"
             >
               Отмена
             </button>
@@ -309,3 +461,4 @@ export default function ProfilePage() {
     </div>
   )
 }
+

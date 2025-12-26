@@ -3,8 +3,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   display_name TEXT,
-  full_name TEXT,
   avatar_url TEXT,
+  last_seen TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -17,6 +17,18 @@ BEGIN
                  AND column_name = 'display_name'
                  AND table_schema = 'public') THEN
     ALTER TABLE public.profiles ADD COLUMN display_name TEXT;
+  END IF;
+END
+$$;
+
+-- Добавление колонки last_seen, если она не существует
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'profiles'
+                 AND column_name = 'last_seen'
+                 AND table_schema = 'public') THEN
+    ALTER TABLE public.profiles ADD COLUMN last_seen TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW());
   END IF;
 END
 $$;
@@ -37,17 +49,26 @@ DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 CREATE POLICY "Users can update their own profile" ON public.profiles
   FOR UPDATE USING (auth.uid() = id);
 
+-- Дополнительная политика для upsert операций
+DROP POLICY IF EXISTS "Users can upsert their own profile" ON public.profiles;
+CREATE POLICY "Users can upsert their own profile" ON public.profiles
+  FOR ALL USING (auth.uid() = id);
+
 -- Функция для автоматического создания профиля при регистрации
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, display_name, full_name)
+  INSERT INTO public.profiles (id, email, display_name)
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'display_name', NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name')
-  );
+    COALESCE(NEW.raw_user_meta_data->>'display_name', NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1))
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    display_name = COALESCE(EXCLUDED.display_name, profiles.display_name),
+    full_name = COALESCE(EXCLUDED.full_name, profiles.full_name),
+    updated_at = TIMEZONE('utc'::text, NOW());
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -76,6 +97,7 @@ CREATE TRIGGER handle_updated_at
 -- Создание индексов для производительности
 CREATE INDEX IF NOT EXISTS profiles_email_idx ON public.profiles(email);
 CREATE INDEX IF NOT EXISTS profiles_created_at_idx ON public.profiles(created_at DESC);
+CREATE INDEX IF NOT EXISTS profiles_last_seen_idx ON public.profiles(last_seen DESC);
 
 -- Добавление индекса для display_name (с проверкой)
 DO $$
@@ -107,3 +129,68 @@ CREATE POLICY "Users can update their own avatar" ON storage.objects
 DROP POLICY IF EXISTS "Users can delete their own avatar" ON storage.objects;
 CREATE POLICY "Users can delete their own avatar" ON storage.objects
   FOR DELETE USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+-- Создание профиля для существующего пользователя (если не существует)
+INSERT INTO public.profiles (id, email, display_name, full_name)
+SELECT
+  id,
+  email,
+  COALESCE(raw_user_meta_data->>'display_name', raw_user_meta_data->>'full_name', raw_user_meta_data->>'name', split_part(email, '@', 1)),
+  COALESCE(raw_user_meta_data->>'full_name', raw_user_meta_data->>'name')
+FROM auth.users
+WHERE id NOT IN (SELECT id FROM public.profiles)
+ON CONFLICT (id) DO NOTHING;
+
+-- Функция для обновления raw_user_meta_data (доступна аутентифицированным пользователям)
+CREATE OR REPLACE FUNCTION update_user_metadata(user_id UUID, display_name TEXT, full_name TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  current_user_id UUID;
+BEGIN
+  -- Получаем ID текущего пользователя
+  current_user_id := auth.uid();
+
+  -- Проверяем, что пользователь обновляет свои собственные данные
+  IF current_user_id IS NULL OR current_user_id != user_id THEN
+    RAISE EXCEPTION 'Access denied: can only update own metadata';
+  END IF;
+
+  -- Обновляем raw_user_meta_data
+  UPDATE auth.users
+  SET raw_user_meta_data = jsonb_set(
+    jsonb_set(
+      COALESCE(raw_user_meta_data, '{}'::jsonb),
+      '{display_name}',
+      to_jsonb(display_name)
+    ),
+    '{full_name}',
+    to_jsonb(full_name)
+  )
+  WHERE id = user_id;
+
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Альтернативная функция без проверки безопасности (для тестирования)
+CREATE OR REPLACE FUNCTION update_user_metadata_admin(user_id UUID, display_name TEXT, full_name TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+  UPDATE auth.users
+  SET raw_user_meta_data = jsonb_set(
+    jsonb_set(
+      COALESCE(raw_user_meta_data, '{}'::jsonb),
+      '{display_name}',
+      to_jsonb(display_name)
+    ),
+    '{full_name}',
+    to_jsonb(full_name)
+  )
+  WHERE id = user_id;
+
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+
