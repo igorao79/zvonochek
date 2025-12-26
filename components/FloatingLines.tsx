@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, memo } from 'react';
 import {
   Scene,
   OrthographicCamera,
@@ -7,8 +7,7 @@ import {
   Mesh,
   ShaderMaterial,
   Vector3,
-  Vector2,
-  Clock
+  Vector2
 } from 'three';
 
 import './FloatingLines.css';
@@ -203,31 +202,6 @@ void main() {
 }
 `;
 
-const MAX_GRADIENT_STOPS = 8;
-
-function hexToVec3(hex: string) {
-  let value = hex.trim();
-
-  if (value.startsWith('#')) {
-    value = value.slice(1);
-  }
-
-  let r = 255;
-  let g = 255;
-  let b = 255;
-
-  if (value.length === 3) {
-    r = parseInt(value[0] + value[0], 16);
-    g = parseInt(value[1] + value[1], 16);
-    b = parseInt(value[2] + value[2], 16);
-  } else if (value.length === 6) {
-    r = parseInt(value.slice(0, 2), 16);
-    g = parseInt(value.slice(2, 4), 16);
-    b = parseInt(value.slice(4, 6), 16);
-  }
-
-  return new Vector3(r / 255, g / 255, b / 255);
-}
 
 interface FloatingLinesProps {
   linesGradient?: string[];
@@ -244,10 +218,10 @@ interface FloatingLinesProps {
   mouseDamping?: number;
   parallax?: boolean;
   parallaxStrength?: number;
-  mixBlendMode?: string;
+  mixBlendMode?: React.CSSProperties['mixBlendMode'];
 }
 
-export default function FloatingLines({
+const FloatingLines = memo(function FloatingLines({
   linesGradient,
   enabledWaves = ['top', 'middle', 'bottom'],
   lineCount = [6],
@@ -265,6 +239,37 @@ export default function FloatingLines({
   mixBlendMode = 'screen'
 }: FloatingLinesProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<Scene | null>(null);
+  const cameraRef = useRef<OrthographicCamera | null>(null);
+  const rendererRef = useRef<WebGLRenderer | null>(null);
+  const meshRef = useRef<Mesh | null>(null);
+  const uniformsRef = useRef<Record<string, { value: any }>>(null);
+  const startTimeRef = useRef<number>(0);
+
+  // Функция для преобразования hex цвета в vec3
+  const hexToVec3 = (hex: string) => {
+    let value = hex.trim();
+    if (value.startsWith('#')) {
+      value = value.slice(1);
+    }
+
+    let r = 255;
+    let g = 255;
+    let b = 255;
+
+    if (value.length === 3) {
+      r = parseInt(value[0] + value[0], 16);
+      g = parseInt(value[1] + value[1], 16);
+      b = parseInt(value[2] + value[2], 16);
+    } else if (value.length === 6) {
+      r = parseInt(value.slice(0, 2), 16);
+      g = parseInt(value.slice(2, 4), 16);
+      b = parseInt(value.slice(4, 6), 16);
+    }
+
+    return new Vector3(r / 255, g / 255, b / 255);
+  };
+
   const targetMouseRef = useRef(new Vector2(-1000, -1000));
   const currentMouseRef = useRef(new Vector2(-1000, -1000));
   const targetInfluenceRef = useRef(0);
@@ -272,17 +277,17 @@ export default function FloatingLines({
   const targetParallaxRef = useRef(new Vector2(0, 0));
   const currentParallaxRef = useRef(new Vector2(0, 0));
 
-  const getLineCount = (waveType: string) => {
+  const getLineCount = (waveType: 'top' | 'middle' | 'bottom') => {
     if (typeof lineCount === 'number') return lineCount;
-    if (!enabledWaves.includes(waveType as any)) return 0;
-    const index = enabledWaves.indexOf(waveType as any);
+    if (!enabledWaves.includes(waveType)) return 0;
+    const index = enabledWaves.indexOf(waveType);
     return lineCount[index] ?? 6;
   };
 
-  const getLineDistance = (waveType: string) => {
+  const getLineDistance = (waveType: 'top' | 'middle' | 'bottom') => {
     if (typeof lineDistance === 'number') return lineDistance;
-    if (!enabledWaves.includes(waveType as any)) return 0.1;
-    const index = enabledWaves.indexOf(waveType as any);
+    if (!enabledWaves.includes(waveType)) return 0.1;
+    const index = enabledWaves.indexOf(waveType);
     return lineDistance[index] ?? 0.1;
   };
 
@@ -294,19 +299,40 @@ export default function FloatingLines({
   const middleLineDistance = enabledWaves.includes('middle') ? getLineDistance('middle') * 0.01 : 0.01;
   const bottomLineDistance = enabledWaves.includes('bottom') ? getLineDistance('bottom') * 0.01 : 0.01;
 
+  // Инициализация WebGL сцены - один раз при монтировании
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const scene = new Scene();
+    console.log('🎨 Initializing FloatingLines WebGL scene');
 
+    const scene = new Scene();
     const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
     camera.position.z = 1;
 
     const renderer = new WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.domElement.style.width = '100%';
-    renderer.domElement.style.height = '100%';
+    renderer.domElement.style.position = 'absolute';
+    renderer.domElement.style.top = '0';
+    renderer.domElement.style.left = '0';
+    renderer.domElement.style.width = '100vw';
+    renderer.domElement.style.height = '100vh';
+    renderer.domElement.style.pointerEvents = 'auto';
     containerRef.current.appendChild(renderer.domElement);
+
+    const geometry = new PlaneGeometry(2, 2);
+
+    // Создаем uniforms с начальными значениями
+    // Создаем массив цветов для шейдера (8 элементов максимум)
+    const MAX_GRADIENT_STOPS = 8;
+    const gradientColors = Array.from({ length: MAX_GRADIENT_STOPS }, () => new Vector3(1, 1, 1));
+
+    if (linesGradient && linesGradient.length > 0) {
+      const stops = linesGradient.slice(0, MAX_GRADIENT_STOPS);
+      stops.forEach((hex, i) => {
+        const color = hexToVec3(hex);
+        gradientColors[i].set(color.x, color.y, color.z);
+      });
+    }
 
     const uniforms = {
       iTime: { value: 0 },
@@ -353,73 +379,82 @@ export default function FloatingLines({
       parallaxStrength: { value: parallaxStrength },
       parallaxOffset: { value: new Vector2(0, 0) },
 
-      lineGradient: {
-        value: Array.from({ length: MAX_GRADIENT_STOPS }, () => new Vector3(1, 1, 1))
-      },
-      lineGradientCount: { value: 0 }
+      lineGradient: { value: gradientColors },
+      lineGradientCount: { value: linesGradient?.length || 0 }
     };
 
-    if (linesGradient && linesGradient.length > 0) {
-      const stops = linesGradient.slice(0, MAX_GRADIENT_STOPS);
-      uniforms.lineGradientCount.value = stops.length;
-
-      stops.forEach((hex, i) => {
-        const color = hexToVec3(hex);
-        uniforms.lineGradient.value[i].set(color.x, color.y, color.z);
-      });
-    }
-
     const material = new ShaderMaterial({
-      uniforms,
       vertexShader,
-      fragmentShader
+      fragmentShader,
+      uniforms
     });
 
-    const geometry = new PlaneGeometry(2, 2);
     const mesh = new Mesh(geometry, material);
     scene.add(mesh);
 
-    const clock = new Clock();
+    // Сохраняем ссылки
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    rendererRef.current = renderer;
+    meshRef.current = mesh;
+    uniformsRef.current = uniforms;
+    startTimeRef.current = performance.now();
 
+    // ResizeObserver с debounce
+    let resizeTimeout: number;
     const setSize = () => {
-      const el = containerRef.current;
-      const width = el?.clientWidth || 1;
-      const height = el?.clientHeight || 1;
+      if (!renderer || !containerRef.current) return;
 
-      renderer.setSize(width, height, false);
+      clearTimeout(resizeTimeout);
+      resizeTimeout = window.setTimeout(() => {
+        if (!containerRef.current) return;
 
-      const canvasWidth = renderer.domElement.width;
-      const canvasHeight = renderer.domElement.height;
-      uniforms.iResolution.value.set(canvasWidth, canvasHeight, 1);
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        console.log(`📏 Window size: ${width}x${height}`);
+
+        if (width > 0 && height > 0) {
+          renderer.setSize(width, height);
+          uniforms.iResolution.value.set(width, height, 1);
+          console.log(`📏 FloatingLines resized: ${width}x${height}`);
+        }
+      }, 50);
     };
 
-    setSize();
+    const ro = new ResizeObserver(setSize);
+    ro.observe(containerRef.current);
+    setSize(); // Начальный размер
 
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(setSize) : null;
-
-    if (ro && containerRef.current) {
-      ro.observe(containerRef.current);
-    }
+    // Обработчики мыши
+    // Таймер для автоматического сброса влияния, если мышь долго не двигается
+    let lastMouseMoveTime = Date.now();
+    const resetInfluenceTimeout = 1500; // 1.5 секунды без движения
 
     const handlePointerMove = (event: PointerEvent) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const dpr = renderer.getPixelRatio();
+      if (!interactive || !renderer) return;
 
-      targetMouseRef.current.set(x * dpr, (rect.height - y) * dpr);
+      lastMouseMoveTime = Date.now();
+
+      // Передаем координаты в CSS пикселях (без DPR), как ожидает шейдер
+      const rect = renderer.domElement.getBoundingClientRect();
+
+      const x = event.clientX - rect.left;
+      const y = rect.height - (event.clientY - rect.top);
+
+      targetMouseRef.current.set(x, y);
       targetInfluenceRef.current = 1.0;
 
       if (parallax) {
-        const centerX = rect.width / 2;
-        const centerY = rect.height / 2;
-        const offsetX = (x - centerX) / rect.width;
-        const offsetY = -(y - centerY) / rect.height;
-        targetParallaxRef.current.set(offsetX * parallaxStrength, offsetY * parallaxStrength);
+        const parallaxX = (event.clientX / rect.width - 0.5) * 2;
+        const parallaxY = (event.clientY / rect.height - 0.5) * 2;
+        targetParallaxRef.current.set(parallaxX * parallaxStrength, -parallaxY * parallaxStrength);
       }
     };
 
     const handlePointerLeave = () => {
+      if (!interactive) return;
+      console.log('👆 Mouse left canvas');
       targetInfluenceRef.current = 0.0;
     };
 
@@ -428,18 +463,29 @@ export default function FloatingLines({
       renderer.domElement.addEventListener('pointerleave', handlePointerLeave);
     }
 
-    let raf = 0;
+    // Render loop
+    let raf: number;
     const renderLoop = () => {
-      uniforms.iTime.value = clock.getElapsedTime();
+      if (!renderer || !scene || !camera || !uniforms) return;
 
-      if (interactive) {
-        currentMouseRef.current.lerp(targetMouseRef.current, mouseDamping);
-        uniforms.iMouse.value.copy(currentMouseRef.current);
+      // Обновляем время с сохранением стартового времени
+      uniforms.iTime.value = (performance.now() - startTimeRef.current) / 1000;
 
-        currentInfluenceRef.current += (targetInfluenceRef.current - currentInfluenceRef.current) * mouseDamping;
-        uniforms.bendInfluence.value = currentInfluenceRef.current;
+      // Обновляем мышь
+      currentMouseRef.current.lerp(targetMouseRef.current, mouseDamping);
+      uniforms.iMouse.value.copy(currentMouseRef.current);
+
+      // Автоматический сброс влияния при отсутствии движения мыши
+      const timeSinceLastMove = Date.now() - lastMouseMoveTime;
+      if (timeSinceLastMove > resetInfluenceTimeout) {
+        targetInfluenceRef.current = 0.0;
       }
 
+      // Обновляем влияние
+      currentInfluenceRef.current += (targetInfluenceRef.current - currentInfluenceRef.current) * mouseDamping;
+      uniforms.bendInfluence.value = currentInfluenceRef.current;
+
+      // Обновляем параллакс
       if (parallax) {
         currentParallaxRef.current.lerp(targetParallaxRef.current, mouseDamping);
         uniforms.parallaxOffset.value.copy(currentParallaxRef.current);
@@ -451,47 +497,120 @@ export default function FloatingLines({
     renderLoop();
 
     return () => {
+      console.log('🧹 Cleaning up FloatingLines WebGL scene');
       cancelAnimationFrame(raf);
-      if (ro && containerRef.current) {
-        ro.disconnect();
-      }
-
+      if (ro) ro.disconnect();
       if (interactive) {
         renderer.domElement.removeEventListener('pointermove', handlePointerMove);
         renderer.domElement.removeEventListener('pointerleave', handlePointerLeave);
       }
-
-      geometry.dispose();
-      material.dispose();
-      renderer.dispose();
-      if (renderer.domElement.parentElement) {
-        renderer.domElement.parentElement.removeChild(renderer.domElement);
-      }
+      // НЕ удаляем canvas и renderer - они должны жить постоянно
     };
-  }, [
-    linesGradient,
-    enabledWaves,
-    lineCount,
-    lineDistance,
-    topWavePosition,
-    middleWavePosition,
-    bottomWavePosition,
-    animationSpeed,
-    interactive,
-    bendRadius,
-    bendStrength,
-    mouseDamping,
-    parallax,
-    parallaxStrength
-  ]);
+  }, []); // ПУСТОЙ массив зависимостей - инициализация только один раз!
+
+  // Обновление uniforms при изменении пропсов (только после инициализации)
+  useEffect(() => {
+    if (uniformsRef.current?.animationSpeed) {
+      uniformsRef.current.animationSpeed.value = animationSpeed;
+    }
+  }, [animationSpeed]);
+
+  useEffect(() => {
+    if (uniformsRef.current?.enableTop &&
+        uniformsRef.current.enableMiddle &&
+        uniformsRef.current.enableBottom) {
+      uniformsRef.current.enableTop.value = enabledWaves.includes('top');
+      uniformsRef.current.enableMiddle.value = enabledWaves.includes('middle');
+      uniformsRef.current.enableBottom.value = enabledWaves.includes('bottom');
+    }
+  }, [enabledWaves]);
+
+  useEffect(() => {
+    if (uniformsRef.current?.topLineCount &&
+        uniformsRef.current.middleLineCount &&
+        uniformsRef.current.bottomLineCount) {
+      uniformsRef.current.topLineCount.value = topLineCount;
+      uniformsRef.current.middleLineCount.value = middleLineCount;
+      uniformsRef.current.bottomLineCount.value = bottomLineCount;
+    }
+  }, [topLineCount, middleLineCount, bottomLineCount]);
+
+  useEffect(() => {
+    if (uniformsRef.current?.topLineDistance &&
+        uniformsRef.current.middleLineDistance &&
+        uniformsRef.current.bottomLineDistance) {
+      uniformsRef.current.topLineDistance.value = topLineDistance;
+      uniformsRef.current.middleLineDistance.value = middleLineDistance;
+      uniformsRef.current.bottomLineDistance.value = bottomLineDistance;
+    }
+  }, [topLineDistance, middleLineDistance, bottomLineDistance]);
+
+  useEffect(() => {
+    if (uniformsRef.current?.topWavePosition &&
+        uniformsRef.current.middleWavePosition &&
+        uniformsRef.current.bottomWavePosition) {
+      uniformsRef.current.topWavePosition.value.set(
+        topWavePosition?.x ?? 10.0,
+        topWavePosition?.y ?? 0.5,
+        topWavePosition?.rotate ?? -0.4
+      );
+      uniformsRef.current.middleWavePosition.value.set(
+        middleWavePosition?.x ?? 5.0,
+        middleWavePosition?.y ?? 0.0,
+        middleWavePosition?.rotate ?? 0.2
+      );
+      uniformsRef.current.bottomWavePosition.value.set(
+        bottomWavePosition?.x ?? 2.0,
+        bottomWavePosition?.y ?? -0.7,
+        bottomWavePosition?.rotate ?? 0.4
+      );
+    }
+  }, [topWavePosition, middleWavePosition, bottomWavePosition]);
+
+  useEffect(() => {
+    if (uniformsRef.current?.interactive &&
+        uniformsRef.current.bendRadius &&
+        uniformsRef.current.bendStrength) {
+      uniformsRef.current.interactive.value = interactive;
+      uniformsRef.current.bendRadius.value = bendRadius;
+      uniformsRef.current.bendStrength.value = bendStrength;
+    }
+  }, [interactive, bendRadius, bendStrength]);
+
+  useEffect(() => {
+    if (uniformsRef.current?.parallax && uniformsRef.current.parallaxStrength) {
+      uniformsRef.current.parallax.value = parallax;
+      uniformsRef.current.parallaxStrength.value = parallaxStrength;
+    }
+  }, [parallax, parallaxStrength]);
+
+  useEffect(() => {
+    if (uniformsRef.current?.lineGradient && uniformsRef.current?.lineGradientCount) {
+      // Преобразование цветов при обновлении
+      const gradientColors = Array.from({ length: 8 }, () => new Vector3(1, 1, 1));
+
+      if (linesGradient && linesGradient.length > 0) {
+        const stops = linesGradient.slice(0, 8);
+        stops.forEach((hex, i) => {
+          const color = hexToVec3(hex);
+          gradientColors[i].set(color.x, color.y, color.z);
+        });
+      }
+
+      uniformsRef.current.lineGradient.value = gradientColors;
+      uniformsRef.current.lineGradientCount.value = linesGradient?.length || 0;
+    }
+  }, [linesGradient]);
 
   return (
     <div
       ref={containerRef}
       className="floating-lines-container"
       style={{
-        mixBlendMode: mixBlendMode as any
+        mixBlendMode: mixBlendMode as React.CSSProperties['mixBlendMode']
       }}
     />
   );
-}
+});
+
+export default FloatingLines;

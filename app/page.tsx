@@ -766,8 +766,10 @@ export default function AudioCallPage() {
           lineDistance={[8, 6, 4]}
           bendRadius={5.0}
           bendStrength={-0.5}
+          mouseDamping={0.03}
           interactive={true}
           parallax={true}
+          parallaxStrength={0.3}
           linesGradient={['#1A1A1D', '#4E4E50', '#6F2232', '#950740', '#C3073F']}
           animationSpeed={0.8}
           mixBlendMode="screen"
