@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { User } from '@/lib/types'
+import { User, Profile } from '@/lib/types'
+import { logger } from '@/lib/logger'
 
 export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null)
@@ -12,7 +13,6 @@ export default function ProfilePage() {
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
-  const supabase = createClient()
 
   useEffect(() => {
     loadProfile()
@@ -20,10 +20,10 @@ export default function ProfilePage() {
 
   const loadProfile = async () => {
     try {
-      console.log('🔄 Загрузка профиля...')
+      logger.log('🔄 Загрузка профиля...')
 
       const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
-      console.log('👤 Auth user:', {
+      logger.log('👤 Auth user:', {
         user: authUser,
         user_metadata: authUser?.user_metadata,
         raw_user_meta_data: authUser?.app_metadata,
@@ -31,7 +31,7 @@ export default function ProfilePage() {
       })
 
       if (authError || !authUser) {
-        console.log('❌ Пользователь не аутентифицирован')
+        logger.log('❌ Пользователь не аутентифицирован')
         router.push('/login')
         return
       }
@@ -42,7 +42,7 @@ export default function ProfilePage() {
                                  authUser.user_metadata?.display_name ||
                                  authUser.user_metadata?.name
 
-      console.log('🔍 Данные из auth.users:', {
+      logger.log('🔍 Данные из auth.users:', {
         display_name: displayNameFromAuth,
         app_metadata: authUser.app_metadata,
         user_metadata: authUser.user_metadata,
@@ -50,40 +50,41 @@ export default function ProfilePage() {
       })
 
       // Также проверяем таблицу profiles для дополнительных данных (аватар)
-      const { data: profile, error } = await supabase
+      const { data: profile, error } = await (supabase as any)
         .from('profiles')
         .select('*')
         .eq('id', authUser.id)
         .single()
 
-      console.log('📋 Профиль из таблицы profiles:', { profile, error })
+      logger.log('📋 Профиль из таблицы profiles:', { profile, error })
 
       // Приоритет: auth.users метаданные, затем profiles таблица
+      const profileData = profile as Profile | null
       const userData: User = {
         id: authUser.id,
         email: authUser.email || '',
-        display_name: displayNameFromAuth || profile?.display_name || '',
-        avatar_url: profile?.avatar_url || '',
-        created_at: profile?.created_at || authUser.created_at || new Date().toISOString(),
-        updated_at: profile?.updated_at || authUser.updated_at || new Date().toISOString()
+        display_name: displayNameFromAuth || profileData?.display_name || '',
+        avatar_url: profileData?.avatar_url || '',
+        created_at: profileData?.created_at || authUser.created_at || new Date().toISOString(),
+        updated_at: profileData?.updated_at || authUser.updated_at || new Date().toISOString()
       }
 
       // Если в auth.users нет метаданных, но в profiles есть - синхронизируем
       if (!displayNameFromAuth && profile?.display_name) {
-        console.log('🔄 Синхронизация: копируем данные из profiles в auth.users metadata')
+        logger.log('🔄 Синхронизация: копируем данные из profiles в auth.users metadata')
         try {
           await supabase.auth.updateUser({
             data: {
               display_name: profile.display_name
             }
           })
-          console.log('✅ Метаданные синхронизированы')
+          logger.log('✅ Метаданные синхронизированы')
         } catch (syncError) {
-          console.warn('⚠️ Не удалось синхронизировать метаданные:', syncError)
+          logger.warn('⚠️ Не удалось синхронизировать метаданные:', syncError)
         }
       }
 
-      console.log('✅ Финальные данные пользователя:', {
+      logger.log('✅ Финальные данные пользователя:', {
         id: userData.id,
         email: userData.email,
         display_name: userData.display_name,
@@ -94,7 +95,7 @@ export default function ProfilePage() {
 
       // Предупреждение если данные из разных источников
       if (displayNameFromAuth && profile?.display_name && displayNameFromAuth !== profile.display_name) {
-        console.warn('⚠️ Несоответствие данных:', {
+        logger.warn('⚠️ Несоответствие данных:', {
           auth_metadata: displayNameFromAuth,
           profiles_table: profile.display_name
         })
@@ -102,7 +103,7 @@ export default function ProfilePage() {
 
       setUser(userData)
     } catch (error) {
-      console.error('❌ Error loading profile:', error)
+      logger.error('❌ Error loading profile:', error)
       alert('Ошибка загрузки профиля')
     } finally {
       setLoading(false)
@@ -112,7 +113,7 @@ export default function ProfilePage() {
   const saveProfile = async () => {
     if (!user) return
 
-    console.log('🔄 Начинаем сохранение профиля:', {
+    logger.log('🔄 Начинаем сохранение профиля:', {
       id: user.id,
       display_name: user.display_name,
       avatar_url: user.avatar_url
@@ -123,7 +124,7 @@ export default function ProfilePage() {
     try {
       // Проверяем аутентификацию
       const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-      console.log('🔐 Сессия:', { session: !!session, error: sessionError })
+      logger.log('🔐 Сессия:', { session: !!session, error: sessionError })
 
       if (sessionError || !session) {
         throw new Error('Пользователь не аутентифицирован')
@@ -136,25 +137,25 @@ export default function ProfilePage() {
         .eq('id', user.id)
         .single()
 
-      console.log('📋 Существующий профиль:', { data: existingProfile, error: checkError })
+      logger.log('📋 Существующий профиль:', { data: existingProfile, error: checkError })
 
       let result
       if (existingProfile) {
         // Профиль существует - обновляем
-        console.log('📝 Обновляем существующий профиль...')
-        result = await supabase
+        logger.log('📝 Обновляем существующий профиль...')
+        result = await (supabase as any)
           .from('profiles')
-        .update({
-          display_name: user.display_name?.trim() || '',
-          avatar_url: user.avatar_url,
-          updated_at: new Date().toISOString()
-        })
+          .update({
+            display_name: user.display_name?.trim() || '',
+            avatar_url: user.avatar_url,
+            updated_at: new Date().toISOString()
+          })
           .eq('id', user.id)
           .select()
       } else {
         // Профиль не существует - создаем
-        console.log('🆕 Создаем новый профиль...')
-        result = await supabase
+        logger.log('🆕 Создаем новый профиль...')
+        result = await (supabase as any)
           .from('profiles')
           .insert({
             id: user.id,
@@ -165,7 +166,7 @@ export default function ProfilePage() {
           .select()
       }
 
-      console.log('💾 Результат сохранения:', { data: result.data, error: result.error })
+      logger.log('💾 Результат сохранения:', { data: result.data, error: result.error })
 
       if (result.error) {
         throw result.error
@@ -176,33 +177,33 @@ export default function ProfilePage() {
       }
 
       // Проверяем, что данные действительно сохранились
-      const { data: verifyData, error: verifyError } = await supabase
+      const { data: verifyData, error: verifyError } = await (supabase as any)
         .from('profiles')
         .select('display_name')
         .eq('id', user.id)
         .single()
 
-      console.log('✅ Проверка сохраненных данных:', { data: verifyData, error: verifyError })
+      logger.log('✅ Проверка сохраненных данных:', { data: verifyData, error: verifyError })
 
       if (verifyError) {
-        console.warn('⚠️ Не удалось проверить сохраненные данные:', verifyError)
-      } else if (verifyData.display_name !== (user.display_name?.trim() || '')) {
-        console.warn('⚠️ Display name не совпадает:', {
+        logger.warn('⚠️ Не удалось проверить сохраненные данные:', verifyError)
+      } else if ((verifyData as any).display_name !== (user.display_name?.trim() || '')) {
+        logger.warn('⚠️ Display name не совпадает:', {
           expected: user.display_name?.trim() || '',
-          actual: verifyData.display_name
+          actual: (verifyData as any).display_name
         })
       }
 
       // Также обновляем raw_user_meta_data в auth.users через RPC функцию
-      const { data: rpcResult, error: authUpdateError } = await supabase.rpc('update_user_metadata_admin', {
+      const { data: rpcResult, error: authUpdateError } = await (supabase as any).rpc('update_user_metadata_admin', {
         user_id: user.id,
         display_name: user.display_name?.trim() || ''
       })
 
-      console.log('🔄 RPC результат:', { data: rpcResult, error: authUpdateError })
+      logger.log('🔄 RPC результат:', { data: rpcResult, error: authUpdateError })
 
       if (authUpdateError) {
-        console.warn('⚠️ Не удалось обновить raw_user_meta_data через RPC:', authUpdateError)
+        logger.warn('⚠️ Не удалось обновить raw_user_meta_data через RPC:', authUpdateError)
         // Попробуем updateUser как fallback
         const { error: fallbackError } = await supabase.auth.updateUser({
           data: {
@@ -210,12 +211,12 @@ export default function ProfilePage() {
           }
         })
         if (fallbackError) {
-          console.warn('⚠️ Fallback (user_metadata) тоже не сработал:', fallbackError)
+          logger.warn('⚠️ Fallback (user_metadata) тоже не сработал:', fallbackError)
         } else {
-          console.log('✅ user_metadata обновлены через fallback')
+          logger.log('✅ user_metadata обновлены через fallback')
         }
       } else {
-        console.log('✅ raw_user_meta_data обновлены в auth.users через RPC')
+        logger.log('✅ raw_user_meta_data обновлены в auth.users через RPC')
       }
 
       // Обновляем локальное состояние
@@ -232,7 +233,7 @@ export default function ProfilePage() {
       }, 2000)
 
     } catch (error) {
-      console.error('❌ Ошибка сохранения профиля:', error)
+      logger.error('❌ Ошибка сохранения профиля:', error)
 
       let errorMessage = 'Неизвестная ошибка'
       if (error instanceof Error) {
@@ -256,7 +257,7 @@ export default function ProfilePage() {
       if (user.avatar_url) {
         const oldPath = user.avatar_url.split('/').pop()
         if (oldPath) {
-          await supabase.storage.from('avatars').remove([`${user.id}/${oldPath}`])
+          await (supabase as any).storage.from('avatars').remove([`${user.id}/${oldPath}`])
         }
       }
 
@@ -265,21 +266,21 @@ export default function ProfilePage() {
       const fileName = `${Date.now()}.${fileExt}`
       const filePath = `${user.id}/${fileName}`
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await (supabase as any).storage
         .from('avatars')
         .upload(filePath, file)
 
       if (uploadError) throw uploadError
 
       // Получаем публичный URL
-      const { data } = supabase.storage
+      const { data } = (supabase as any).storage
         .from('avatars')
         .getPublicUrl(filePath)
 
       const avatarUrl = data.publicUrl
 
       // Обновляем профиль
-      const { error: updateError } = await supabase
+      const { error: updateError } = await (supabase as any)
         .from('profiles')
         .update({ avatar_url: avatarUrl })
         .eq('id', user.id)
@@ -289,7 +290,7 @@ export default function ProfilePage() {
       setUser({ ...user, avatar_url: avatarUrl })
       alert('Аватар загружен!')
     } catch (error) {
-      console.error('Error uploading avatar:', error)
+      logger.error('Error uploading avatar:', error)
       alert('Ошибка загрузки аватара')
     } finally {
       setUploading(false)

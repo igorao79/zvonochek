@@ -15,19 +15,19 @@ class Logger {
 
   log(...args: any[]): void {
     if (this.shouldLog('log')) {
-      console.log(...args)
+      logger.log(...args)
     }
   }
 
   warn(...args: any[]): void {
     if (this.shouldLog('warn')) {
-      console.warn(...args)
+      logger.warn(...args)
     }
   }
 
   error(...args: any[]): void {
     if (this.shouldLog('error')) {
-      console.error(...args)
+      logger.error(...args)
     }
   }
 }

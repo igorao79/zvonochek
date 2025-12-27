@@ -3,8 +3,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import SimplePeer from 'simple-peer'
 import { WebRTCService, WebRTCRefs } from '@/lib/webrtc'
-import { CallState, User } from '@/lib/types'
-import { createClient } from '@/lib/supabase/client'
+import { CallState, User, Profile } from '@/lib/types'
+import { supabase } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { logger } from '@/lib/logger'
 import Header from '@/components/Header'
@@ -52,7 +52,6 @@ export default function AudioCallPage() {
   const reconnectAttemptsRef = useRef<number>(0)
 
   const router = useRouter()
-  const supabase = createClient()
 
   // Функция для определения онлайн статуса
   const isUserOnline = (lastSeen: string | null): boolean => {
@@ -166,13 +165,14 @@ export default function AudioCallPage() {
         .single()
 
       if (!profileError && profile) {
+        const profileData = profile as Profile
         setCurrentUser({
           id: user.id,
           email: user.email || '',
-          display_name: profile.display_name,
-          avatar_url: profile.avatar_url,
-          created_at: profile.created_at,
-          updated_at: profile.updated_at,
+          display_name: profileData.display_name,
+          avatar_url: profileData.avatar_url,
+          created_at: profileData.created_at,
+          updated_at: profileData.updated_at,
           online: true
         })
       } else {
@@ -208,13 +208,14 @@ export default function AudioCallPage() {
       let currentUserData = null
       if (!userProfileError && userProfile) {
         logger.log('initApp: Setting current user profile')
+        const profileData = userProfile as Profile
         currentUserData = {
-          id: userProfile.id,
-          email: userProfile.email,
-          display_name: userProfile.display_name,
-          avatar_url: userProfile.avatar_url,
-          created_at: userProfile.created_at,
-          updated_at: userProfile.updated_at,
+          id: profileData.id,
+          email: profileData.email || '',
+          display_name: profileData.display_name,
+          avatar_url: profileData.avatar_url,
+          created_at: profileData.created_at,
+          updated_at: profileData.updated_at,
           online: true
         }
         setCurrentUser(currentUserData)
@@ -300,10 +301,10 @@ export default function AudioCallPage() {
 
     const updateOnlineStatus = async () => {
       try {
-        const { error } = await supabase
-          .from('profiles')
-          .update({ last_seen: new Date().toISOString() })
-          .eq('id', currentUser.id)
+      const { error } = await (supabase as any)
+        .from('profiles')
+        .update({ last_seen: new Date().toISOString() })
+        .eq('id', currentUser.id)
 
         if (error) {
           logger.warn('Failed to update online status:', error)
@@ -612,7 +613,7 @@ export default function AudioCallPage() {
 
     setSettingsSaving(true)
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('profiles')
         .upsert({
           id: settingsUser.id,
@@ -648,7 +649,7 @@ export default function AudioCallPage() {
       if (settingsUser.avatar_url) {
         const oldPath = settingsUser.avatar_url.split('/').pop()
         if (oldPath) {
-          await supabase.storage.from('avatars').remove([`${settingsUser.id}/${oldPath}`])
+          await (supabase as any).storage.from('avatars').remove([`${settingsUser.id}/${oldPath}`])
         }
       }
 
@@ -657,21 +658,21 @@ export default function AudioCallPage() {
       const fileName = `${Date.now()}.${fileExt}`
       const filePath = `${settingsUser.id}/${fileName}`
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await (supabase as any).storage
         .from('avatars')
         .upload(filePath, file)
 
       if (uploadError) throw uploadError
 
       // Получаем публичный URL
-      const { data } = supabase.storage
+      const { data } = (supabase as any).storage
         .from('avatars')
         .getPublicUrl(filePath)
 
       const avatarUrl = data.publicUrl
 
       // Обновляем профиль
-      const { error: updateError } = await supabase
+      const { error: updateError } = await (supabase as any)
         .from('profiles')
         .update({ avatar_url: avatarUrl })
         .eq('id', settingsUser.id)

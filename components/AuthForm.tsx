@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import Image from 'next/image'
-import { createClient } from '@/lib/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { logger } from '@/lib/logger'
 
 interface AuthFormProps {
   initialMode?: 'login' | 'register'
@@ -20,7 +21,7 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
   const [emailExists, setEmailExists] = useState(false)
   const [displayNameExists, setDisplayNameExists] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
+  // const supabase = createClient() - теперь используем глобальный клиент
 
   // Валидация email
   const validateEmail = async (email: string) => {
@@ -34,7 +35,7 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
         .single()
 
       if (error && error.code !== 'PGRST116') { // PGRST116 = not found
-        console.error('Error checking email:', error)
+        logger.error('Error checking email:', error)
         // Если нет подключения к Supabase, считаем email валидным
         setEmailExists(false)
         return true
@@ -43,7 +44,7 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
       setEmailExists(!!data)
       return !data // true если email свободен
     } catch (err) {
-      console.error('Email validation error:', err)
+      logger.error('Email validation error:', err)
       // При ошибке сети считаем email валидным
       setEmailExists(false)
       return true
@@ -62,7 +63,7 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
         .single()
 
       if (error && error.code !== 'PGRST116') { // PGRST116 = not found
-        console.error('Error checking display name:', error)
+        logger.error('Error checking display name:', error)
         // Если нет подключения к Supabase, считаем display name валидным
         setDisplayNameExists(false)
         return true
@@ -71,7 +72,7 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
       setDisplayNameExists(!!data)
       return !data // true если display name свободен
     } catch (err) {
-      console.error('Display name validation error:', err)
+      logger.error('Display name validation error:', err)
       // При ошибке сети считаем display name валидным
       setDisplayNameExists(false)
       return true

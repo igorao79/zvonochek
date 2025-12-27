@@ -21,3 +21,14 @@ export type User = {
   online?: boolean
 }
 
+export type Profile = {
+  id: string
+  email?: string
+  display_name?: string
+  full_name?: string
+  avatar_url?: string
+  last_seen?: string
+  created_at: string
+  updated_at: string
+}
+

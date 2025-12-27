@@ -1,7 +1,8 @@
 import SimplePeer from 'simple-peer'
-import { createClient } from '@/lib/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 import { CallState } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
+import { logger } from '@/lib/logger'
 
 // Тип для доступа к RTCPeerConnection внутри SimplePeer
 interface SimplePeerWithPC extends SimplePeer.Instance {
@@ -22,7 +23,7 @@ export class WebRTCService {
   private peer: SimplePeer.Instance | null = null
   private localStream: MediaStream | null = null
   private remoteStream: MediaStream | null = null
-  private supabase = createClient()
+  // private supabase = createClient() - теперь используем глобальный клиент
   private channel: RealtimeChannel | null = null
   private currentUserId: string = ''
   private targetUserId: string | null = null
@@ -62,37 +63,37 @@ export class WebRTCService {
   // Инициализация канала только для получения сигналов
   async initializeSignalChannel() {
     if (this.channel) {
-      console.log(`📺 [User ${this.currentUserId?.slice(0, 8)}] Signal channel already initialized`)
+      logger.log(`📺 [User ${this.currentUserId?.slice(0, 8)}] Signal channel already initialized`)
       return // Уже инициализирован
     }
 
-    const { data: { user } } = await this.supabase.auth.getUser()
+    const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
-      console.log('📺 No authenticated user, skipping channel initialization')
+      logger.log('📺 No authenticated user, skipping channel initialization')
       return
     }
 
     this.currentUserId = user.id
 
     // Создаем канал только для получения входящих сигналов
-    this.channel = this.supabase.channel(`webrtc:${this.currentUserId}`)
+    this.channel = supabase.channel(`webrtc:${this.currentUserId}`)
 
     this.channel
       .on('broadcast', { event: 'webrtc_signal' }, (payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) => {
-        console.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Received signal from ${payload.payload.from.slice(0, 8)}:`, payload.payload.type)
+        logger.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Received signal from ${payload.payload.from.slice(0, 8)}:`, payload.payload.type)
         this.handleIncomingSignal(payload)
       })
       .on('presence', { event: 'sync' }, () => {
-        console.log(`👥 [User ${this.currentUserId.slice(0, 8)}] Channel presence synced`)
+        logger.log(`👥 [User ${this.currentUserId.slice(0, 8)}] Channel presence synced`)
       })
       .subscribe((status) => {
-        console.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Channel status:`, status)
+        logger.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Channel status:`, status)
         if (status === 'SUBSCRIBED') {
-          console.log(`✅ [User ${this.currentUserId.slice(0, 8)}] Successfully subscribed to channel webrtc:${this.currentUserId}`)
+          logger.log(`✅ [User ${this.currentUserId.slice(0, 8)}] Successfully subscribed to channel webrtc:${this.currentUserId}`)
         }
       })
 
-    console.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Signal channel initialized for receiving calls`)
+    logger.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Signal channel initialized for receiving calls`)
   }
 
   private async initializeSupabaseChannel() {
@@ -118,7 +119,7 @@ export class WebRTCService {
   async initializeSounds() {
     try {
       // Загружаем рингтон
-      const { data: ringtoneData } = await this.supabase.storage
+      const { data: ringtoneData } = await supabase.storage
         .from('sounds')
         .getPublicUrl('ringtone.mp3')
 
@@ -129,7 +130,7 @@ export class WebRTCService {
       }
 
       // Загружаем звук окончания звонка
-      const { data: endCallData } = await this.supabase.storage
+      const { data: endCallData } = await supabase.storage
         .from('sounds')
         .getPublicUrl('endcall.mp3')
 
@@ -138,9 +139,9 @@ export class WebRTCService {
         this.endCallAudio.volume = 0.7
       }
 
-      console.log('🔊 Sounds initialized successfully')
+      logger.log('🔊 Sounds initialized successfully')
     } catch (error) {
-      console.error('❌ Error initializing sounds:', error)
+      logger.error('❌ Error initializing sounds:', error)
     }
   }
 
@@ -150,7 +151,7 @@ export class WebRTCService {
       this.isRingtonePlaying = true
       this.ringtoneAudio.currentTime = 0
       this.ringtoneAudio.play().catch(err => {
-        console.error('❌ Error playing ringtone:', err)
+        logger.error('❌ Error playing ringtone:', err)
         this.isRingtonePlaying = false
       })
     }
@@ -170,14 +171,14 @@ export class WebRTCService {
     if (this.endCallAudio) {
       this.endCallAudio.currentTime = 0
       this.endCallAudio.play().catch(err => {
-        console.error('❌ Error playing end call sound:', err)
+        logger.error('❌ Error playing end call sound:', err)
       })
     }
   }
 
   // Обработка завершения звонка от удаленного пользователя (без отправки сигнала обратно)
   handleRemoteEndCall() {
-    console.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Handling remote end call - current state: isCallActive=${this.isCallActive}, targetUserId=${this.targetUserId?.slice(0, 8)}`)
+    logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Handling remote end call - current state: isCallActive=${this.isCallActive}, targetUserId=${this.targetUserId?.slice(0, 8)}`)
 
     // Останавливаем рингтон и проигрываем звук окончания звонка
     this.stopRingtone()
@@ -198,7 +199,7 @@ export class WebRTCService {
 
   async startCall(targetUserId: string) {
     if (this.peer && !this.peer.destroyed) {
-      console.log('⚠️ Call already in progress, ignoring start call request')
+      logger.log('⚠️ Call already in progress, ignoring start call request')
       return
     }
 
@@ -213,7 +214,7 @@ export class WebRTCService {
 
   async answerCall(callerId: string) {
     if (this.peer && !this.peer.destroyed) {
-      console.log('⚠️ Call already in progress, ignoring answer call request')
+      logger.log('⚠️ Call already in progress, ignoring answer call request')
       return
     }
 
@@ -230,7 +231,7 @@ export class WebRTCService {
   }
 
   async endCall() {
-    console.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Ending call - targetUserId: ${this.targetUserId?.slice(0, 8)}, isCallActive: ${this.isCallActive}`)
+    logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Ending call - targetUserId: ${this.targetUserId?.slice(0, 8)}, isCallActive: ${this.isCallActive}`)
 
     // Останавливаем рингтон если он играет
     this.stopRingtone()
@@ -241,7 +242,6 @@ export class WebRTCService {
     // Отправляем сигнал завершения через Supabase канал
     if (this.targetUserId) {
       try {
-        const supabase = createClient()
         const targetChannel = supabase.channel(`webrtc:${this.targetUserId}`)
         await targetChannel.subscribe()
 
@@ -253,9 +253,9 @@ export class WebRTCService {
             from: this.currentUserId
           }
         })
-        console.log('End call signal sent')
+        logger.log('End call signal sent')
       } catch (err) {
-        console.error('Error sending end call signal:', err)
+        logger.error('Error sending end call signal:', err)
       }
     }
 
@@ -271,13 +271,13 @@ export class WebRTCService {
     try {
       // Предотвращаем создание нескольких peer соединений
       if (this.peer && !this.peer.destroyed) {
-        console.log('Peer already exists, destroying old one')
+        logger.log('Peer already exists, destroying old one')
         this.peer.destroy()
         this.peer = null
       }
 
-      console.log('Requesting microphone access...')
-      console.log('HTTPS check:', window.location.protocol === 'https:')
+      logger.log('Requesting microphone access...')
+      logger.log('HTTPS check:', window.location.protocol === 'https:')
 
       // Получаем только аудио поток
       this.localStream = await navigator.mediaDevices.getUserMedia({
@@ -289,7 +289,7 @@ export class WebRTCService {
         },
       })
 
-      console.log('Microphone access granted, stream:', {
+      logger.log('Microphone access granted, stream:', {
         id: this.localStream.id,
         tracks: this.localStream.getTracks().map(track => ({
           kind: track.kind,
@@ -322,7 +322,7 @@ export class WebRTCService {
       try {
         // Проверяем что у нас есть targetUserId перед отправкой
         if (!this.targetUserId) {
-          console.log('⚠️ No targetUserId set, buffering signal until target is set')
+          logger.log('⚠️ No targetUserId set, buffering signal until target is set')
           this.refs.signalBufferRef.current.push({ type: data.type, signal: data as SimplePeer.SignalData, from: this.currentUserId })
           return
         }
@@ -334,13 +334,13 @@ export class WebRTCService {
           signal: data,
         })
       } catch (err) {
-        console.error('Error sending signal:', err)
+        logger.error('Error sending signal:', err)
       }
     })
 
       // Обработчик подключения
       this.peer.on('connect', () => {
-        console.log('Peer connected!')
+        logger.log('Peer connected!')
         this.isCallActive = true
         this.onStateChange?.('connected')
 
@@ -350,7 +350,7 @@ export class WebRTCService {
 
       // Обработчик получения remote stream
       this.peer.on('stream', (remoteStream: MediaStream) => {
-        console.log('Received remote stream:', {
+        logger.log('Received remote stream:', {
           id: remoteStream.id,
           tracks: remoteStream.getTracks().map(track => ({
             kind: track.kind,
@@ -369,11 +369,11 @@ export class WebRTCService {
       this.peer.on('error', (err: Error) => {
         // Игнорируем ошибку User-Initiated Abort, так как это нормальное завершение звонка
         if (err.message.includes('User-Initiated Abort')) {
-          console.log('Peer connection closed by user')
+          logger.log('Peer connection closed by user')
           return
         }
 
-        console.error('Peer error:', err)
+        logger.error('Peer error:', err)
         this.onError?.(`Ошибка соединения: ${err.message}`)
         this.cleanup()
         this.onStateChange?.('idle')
@@ -381,7 +381,7 @@ export class WebRTCService {
 
       // Обработчик закрытия
       this.peer.on('close', () => {
-        console.log('Peer connection closed')
+        logger.log('Peer connection closed')
         this.cleanup()
         this.onStateChange?.('idle')
       })
@@ -392,7 +392,7 @@ export class WebRTCService {
       this.processBufferedSignals()
 
     } catch (err) {
-      console.error('Error initializing peer:', err)
+      logger.error('Error initializing peer:', err)
 
       // Детальная диагностика ошибок
       if (err instanceof Error) {
@@ -428,9 +428,9 @@ export class WebRTCService {
       this.localStream.getTracks().forEach(track => {
         try {
           track.stop()
-          console.log('Stopped track:', track.kind, track.label)
+          logger.log('Stopped track:', track.kind, track.label)
         } catch (err) {
-          console.warn('Error stopping track:', err)
+          logger.warn('Error stopping track:', err)
         }
       })
       this.localStream = null
@@ -448,7 +448,7 @@ export class WebRTCService {
   disconnect() {
     this.cleanup()
     if (this.channel) {
-      this.supabase.removeChannel(this.channel)
+      supabase.removeChannel(this.channel)
       this.channel = null
     }
     // Очищаем все каналы
@@ -463,10 +463,10 @@ export class WebRTCService {
 
     // 1. Обработчик закрытия вкладки/браузера
     const handleBeforeUnload = async () => {
-      console.log('🚨 Page unloading - checking for active call')
+      logger.log('🚨 Page unloading - checking for active call')
 
       if (this.isCallActive && this.targetUserId) {
-        console.log('🚨 Active call detected, sending end call signal before unload')
+        logger.log('🚨 Active call detected, sending end call signal before unload')
 
         // Отправляем сигнал завершения синхронно
         try {
@@ -478,7 +478,7 @@ export class WebRTCService {
         })
           }
         } catch (err) {
-          console.error('🚨 Failed to send end call signal on page unload:', err)
+          logger.error('🚨 Failed to send end call signal on page unload:', err)
         }
 
         // Останавливаем все медиа потоки
@@ -487,7 +487,7 @@ export class WebRTCService {
             try {
               track.stop()
             } catch (err) {
-              console.warn('🚨 Error stopping track on page unload:', err)
+              logger.warn('🚨 Error stopping track on page unload:', err)
             }
           })
         }
@@ -497,7 +497,7 @@ export class WebRTCService {
           try {
             this.peer.destroy()
           } catch (err) {
-            console.warn('🚨 Error destroying peer on page unload:', err)
+            logger.warn('🚨 Error destroying peer on page unload:', err)
           }
         }
       }
@@ -506,34 +506,34 @@ export class WebRTCService {
     // 2. Обработчик изменения видимости страницы
     const handleVisibilityChange = () => {
       const isHidden = document.hidden
-      console.log('Page visibility changed:', { hidden: isHidden, visibilityState: document.visibilityState })
+      logger.log('Page visibility changed:', { hidden: isHidden, visibilityState: document.visibilityState })
 
       if (isHidden && this.isCallActive) {
-        console.log('Page hidden during call - monitoring connection')
+        logger.log('Page hidden during call - monitoring connection')
         // Можно добавить дополнительную логику, например, уменьшить качество
       } else if (!isHidden) {
-        console.log('Page visible again - checking connection')
+        logger.log('Page visible again - checking connection')
         this.lastActivityTime = Date.now()
       }
     }
 
     // 3. Обработчик изменения статуса сети
     const handleOnline = () => {
-      console.log('🔄 Network connection restored')
+      logger.log('🔄 Network connection restored')
       this.isOnline = true
       this.lastActivityTime = Date.now()
     }
 
     const handleOffline = () => {
-      console.log('⚠️ Network connection lost')
+      logger.log('⚠️ Network connection lost')
       this.isOnline = false
 
       // Если мы в звонке, пытаемся восстановить соединение через 5 секунд
       if (this.isCallActive) {
-        console.log('📞 Call active - attempting reconnection in 5 seconds...')
+        logger.log('📞 Call active - attempting reconnection in 5 seconds...')
         setTimeout(() => {
           if (!this.isOnline) {
-            console.log('📞 Network still unavailable - ending call')
+            logger.log('📞 Network still unavailable - ending call')
             this.endCall()
             this.onError?.('Соединение с интернетом потеряно. Звонок завершен.')
           }
@@ -569,13 +569,13 @@ export class WebRTCService {
 
       // Если прошло больше 30 секунд без активности и мы в звонке
       if (timeSinceLastActivity > 30000 && this.isCallActive) {
-        console.log('⚠️ No activity for 30 seconds during call - checking connection')
+        logger.log('⚠️ No activity for 30 seconds during call - checking connection')
 
         // Проверяем peer состояние
         if (this.peer) {
           const pc = (this.peer as SimplePeerWithPC)._pc
           if (pc && pc.connectionState === 'failed') {
-            console.log('📞 Peer connection failed - ending call')
+            logger.log('📞 Peer connection failed - ending call')
             this.endCall()
             this.onError?.('Соединение прервано. Звонок завершен.')
           }
@@ -596,7 +596,7 @@ export class WebRTCService {
 
   // Метод для принудительного сброса состояния (для экстренных случаев)
   forceReset() {
-    console.log('🔄 Force resetting WebRTC state')
+    logger.log('🔄 Force resetting WebRTC state')
 
     // Очищаем все состояния
     this.targetUserId = null
@@ -631,20 +631,20 @@ export class WebRTCService {
 
     // Очищаем каналы
     if (this.channel) {
-      this.supabase.removeChannel(this.channel)
+      supabase.removeChannel(this.channel)
       this.channel = null
     }
 
     this.onStateChange?.('idle')
-    console.log('✅ WebRTC state force reset completed')
+    logger.log('✅ WebRTC state force reset completed')
   }
 
   private handleIncomingSignal(payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) {
     const { type, signal, from } = payload.payload
 
-    console.log('📡 Received WebRTC signal:', payload)
+    logger.log('📡 Received WebRTC signal:', payload)
 
-    console.log('📡 Signal processing check:', {
+    logger.log('📡 Signal processing check:', {
       hasPeer: !!this.peer,
       peerDestroyed: this.peer?.destroyed,
       signalFrom: from,
@@ -655,7 +655,7 @@ export class WebRTCService {
 
     // Обработка специальных сигналов (не WebRTC)
     if (type === 'end-call') {
-      console.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received end call signal from ${from.slice(0, 8)}`)
+      logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received end call signal from ${from.slice(0, 8)}`)
       this.handleRemoteEndCall()
       return
     }
@@ -664,7 +664,7 @@ export class WebRTCService {
     if (from === this.targetUserId || (type === 'offer' && !this.targetUserId)) {
       // Если это offer сигнал - это входящий звонок
       if (type === 'offer') {
-      console.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)}`)
+      logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)}`)
       this.incomingCallerId = from
       this.targetUserId = from
       this.onStateChange?.('receiving')
@@ -674,7 +674,7 @@ export class WebRTCService {
 
       // Для offer сигнала - НЕ инициализируем peer автоматически!
       // Peer будет создан только после явного принятия звонка через answerCall()
-      console.log(`🎯 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)} - waiting for user acceptance`)
+      logger.log(`🎯 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)} - waiting for user acceptance`)
       this.isCallActive = false
     }
 
@@ -688,26 +688,26 @@ export class WebRTCService {
             const hasLocalDescription = !!pc.localDescription
             const hasRemoteDescription = !!pc.remoteDescription
 
-            console.log(`🔍 Peer states - signaling: ${signalingState}, localDesc: ${hasLocalDescription}, remoteDesc: ${hasRemoteDescription}`)
-            console.log(`🔄 Processing ${type} signal from ${from.slice(0, 8)}`)
+            logger.log(`🔍 Peer states - signaling: ${signalingState}, localDesc: ${hasLocalDescription}, remoteDesc: ${hasRemoteDescription}`)
+            logger.log(`🔄 Processing ${type} signal from ${from.slice(0, 8)}`)
 
             // Проверяем допустимость обработки сигнала в текущем состоянии
             if (type === 'offer') {
               // Offer можно принимать только в stable состоянии или если нет remote description
               if (signalingState !== 'stable' && hasRemoteDescription) {
-                console.log(`⚠️ Ignoring offer signal - invalid state (signaling: ${signalingState}, hasRemote: ${hasRemoteDescription})`)
+                logger.log(`⚠️ Ignoring offer signal - invalid state (signaling: ${signalingState}, hasRemote: ${hasRemoteDescription})`)
                 return
               }
             } else if (type === 'answer') {
               // Answer можно принимать только после отправки offer (have-local-offer)
               if (signalingState !== 'have-local-offer') {
-                console.log(`⚠️ Ignoring answer signal - not in have-local-offer state (current: ${signalingState})`)
+                logger.log(`⚠️ Ignoring answer signal - not in have-local-offer state (current: ${signalingState})`)
                 return
               }
             } else if (type === 'candidate') {
               // ICE candidates можно принимать в любое время после установки description
               if (!hasLocalDescription) {
-                console.log('⚠️ Ignoring ICE candidate - no local description set')
+                logger.log('⚠️ Ignoring ICE candidate - no local description set')
                 return
               }
             }
@@ -715,34 +715,34 @@ export class WebRTCService {
 
           this.peer.signal(signal!)
         } catch (err) {
-          console.error('Error processing signal:', err)
+          logger.error('Error processing signal:', err)
 
           // Детальная обработка ошибок
           if (err instanceof Error) {
             if (err.message.includes('destroyed')) {
-              console.log('Peer already destroyed, ignoring signal')
+              logger.log('Peer already destroyed, ignoring signal')
             } else if (err.message.includes('InvalidStateError') || err.message.includes('wrong state') || err.message.includes('Called in wrong state')) {
-              console.log(`Invalid peer state for ${type} signal: ${err.message}`)
+              logger.log(`Invalid peer state for ${type} signal: ${err.message}`)
               // Не буферизуем сигналы, которые вызывают ошибки состояния
             } else if (err.message.includes('remote description') || err.message.includes('local description')) {
-              console.log(`Description error for ${type} signal: ${err.message}`)
+              logger.log(`Description error for ${type} signal: ${err.message}`)
             } else {
-              console.warn('Unexpected peer error:', err.message)
+              logger.warn('Unexpected peer error:', err.message)
             }
           }
         }
       } else {
         // Peer не готов - буферизуем сигнал (только WebRTC сигналы)
         if (signal && type && type !== 'end-call') {
-          console.log(`📦 Buffering ${type} signal from ${from.slice(0, 8)} (peer not ready)`)
+          logger.log(`📦 Buffering ${type} signal from ${from.slice(0, 8)} (peer not ready)`)
           this.refs.signalBufferRef.current.push({ type, signal: signal as SimplePeer.SignalData, from })
-          console.log(`📦 Buffer size: ${this.refs.signalBufferRef.current.length}`)
+          logger.log(`📦 Buffer size: ${this.refs.signalBufferRef.current.length}`)
         } else if (!type || type === 'undefined') {
-          console.warn(`⚠️ Ignoring invalid signal with type: ${type} from ${from.slice(0, 8)}`)
+          logger.warn(`⚠️ Ignoring invalid signal with type: ${type} from ${from.slice(0, 8)}`)
         }
       }
     } else {
-      console.log('Ignoring signal - wrong sender:', {
+      logger.log('Ignoring signal - wrong sender:', {
         from: from?.slice(0, 8),
         expectedFrom: this.targetUserId?.slice(0, 8)
       })
@@ -753,23 +753,23 @@ export class WebRTCService {
     const bufferedSignals = this.refs.signalBufferRef.current
 
     if (bufferedSignals.length > 0 && this.peer && !this.peer.destroyed) {
-      console.log(`🔄 Processing ${bufferedSignals.length} buffered signals`)
+      logger.log(`🔄 Processing ${bufferedSignals.length} buffered signals`)
 
       bufferedSignals.forEach(({ type, signal, from }: { type: string, signal?: SimplePeer.SignalData, from: string }, index: number) => {
         try {
           if (signal) {
-            console.log(`🔄 Processing buffered signal ${index + 1}/${bufferedSignals.length}: ${type} from ${from.slice(0, 8)}`)
+            logger.log(`🔄 Processing buffered signal ${index + 1}/${bufferedSignals.length}: ${type} from ${from.slice(0, 8)}`)
             this.peer!.signal(signal)
           }
         } catch (err) {
-          console.error(`Error processing buffered signal ${index + 1}:`, err)
+          logger.error(`Error processing buffered signal ${index + 1}:`, err)
           // Не пытаемся повторно обработать сигналы, которые вызывают ошибки
         }
       })
 
       // Очищаем буфер после обработки
       this.refs.signalBufferRef.current = []
-      console.log('✅ All buffered signals processed and buffer cleared')
+      logger.log('✅ All buffered signals processed and buffer cleared')
     }
   }
 
@@ -784,17 +784,16 @@ export class WebRTCService {
   async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData }) {
     try {
       if (this.peer?.destroyed) {
-        console.log('Peer destroyed, not sending signal')
+        logger.log('Peer destroyed, not sending signal')
         return
       }
 
-      console.log(`📤 Sending signal to ${data.to.slice(0, 8)}:`, data.type)
+      logger.log(`📤 Sending signal to ${data.to.slice(0, 8)}:`, data.type)
 
       // Пробуем разные способы отправки сигналов
 
       // Способ 1: Через realtime канал с явным httpSend
       try {
-        const supabase = createClient()
         const targetChannel = supabase.channel(`webrtc:${data.to}`)
 
         // Подписываемся на канал
@@ -811,9 +810,9 @@ export class WebRTCService {
           }
         })
 
-        console.log('✅ Signal sent via realtime channel')
+        logger.log('✅ Signal sent via realtime channel')
       } catch (realtimeError) {
-        console.warn('Realtime send failed, trying HTTP fallback:', realtimeError)
+        logger.warn('Realtime send failed, trying HTTP fallback:', realtimeError)
 
         // Способ 2: Через прямой HTTP запрос к нашему API
         try {
@@ -830,18 +829,18 @@ export class WebRTCService {
           })
 
           if (response.ok) {
-            console.log('✅ Signal sent via HTTP fallback')
+            logger.log('✅ Signal sent via HTTP fallback')
           } else {
-            console.error('HTTP fallback failed:', await response.text())
+            logger.error('HTTP fallback failed:', await response.text())
           }
         } catch (httpError) {
-          console.error('Both realtime and HTTP fallback failed:', httpError)
+          logger.error('Both realtime and HTTP fallback failed:', httpError)
         }
       }
 
-      console.log('Signal sent successfully')
+      logger.log('Signal sent successfully')
     } catch (err) {
-      console.error('Error sending signal:', err)
+      logger.error('Error sending signal:', err)
     }
   }
 
@@ -852,7 +851,7 @@ export class WebRTCService {
       // Возвращаем пустой массив - пользователи должны обмениваться ID вручную
       return []
     } catch (error) {
-      console.error('Error fetching users:', error)
+      logger.error('Error fetching users:', error)
       return []
     }
   }

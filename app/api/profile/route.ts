@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { logger } from '@/lib/logger'
 
 export async function POST() {
   try {
@@ -38,7 +39,7 @@ export async function POST() {
       .single()
 
     if (insertError) {
-      console.error('Error creating profile:', insertError)
+        logger.error('Error creating profile:', insertError)
       return NextResponse.json({
         error: 'Failed to create profile',
         details: insertError.message
@@ -50,7 +51,7 @@ export async function POST() {
       profile
     })
   } catch (error) {
-    console.error('Error in profile API:', error)
+    logger.error('Error in profile API:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
