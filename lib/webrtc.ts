@@ -27,6 +27,7 @@ export class WebRTCService {
   private channel: RealtimeChannel | null = null
   private currentUserId: string = ''
   private targetUserId: string | null = null
+  private peerUserId: string | null = null
   private isCallActive = false
   private incomingCallerId: string | null = null
 
@@ -37,6 +38,7 @@ export class WebRTCService {
   private onRemoteStream?: (stream: MediaStream) => void
   private onLocalStream?: (stream: MediaStream) => void
   private onError?: (error: string) => void
+  private onRemoteMutedChange?: (muted: boolean) => void
 
   // Звуки для звонков
   private ringtoneAudio: HTMLAudioElement | null = null
@@ -79,10 +81,10 @@ export class WebRTCService {
     this.channel = this.supabase.channel(`webrtc:${this.currentUserId}`)
 
     this.channel
-      .on('broadcast', { event: 'webrtc_signal' }, (payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) => {
-        logger.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Received signal from ${payload.payload.from.slice(0, 8)}:`, payload.payload.type)
-        this.handleIncomingSignal(payload)
-      })
+        .on('broadcast', { event: 'webrtc_signal' }, (payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) => {
+          logger.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Received signal from ${payload.payload.from.slice(0, 8)}:`, payload.payload.type)
+          this.handleIncomingSignal(payload)
+        })
       .on('presence', { event: 'sync' }, () => {
         logger.log(`👥 [User ${this.currentUserId.slice(0, 8)}] Channel presence synced`)
       })
@@ -108,11 +110,51 @@ export class WebRTCService {
     onRemoteStream?: (stream: MediaStream) => void
     onLocalStream?: (stream: MediaStream) => void
     onError?: (error: string) => void
+    onRemoteMutedChange?: (muted: boolean) => void
   }) {
     this.onStateChange = callbacks.onStateChange
     this.onRemoteStream = callbacks.onRemoteStream
     this.onLocalStream = callbacks.onLocalStream
     this.onError = callbacks.onError
+    this.onRemoteMutedChange = callbacks.onRemoteMutedChange
+  }
+
+  // Установка ID собеседника
+  setPeerUserId(userId: string | null) {
+    console.log(`👥 WebRTCService: Setting peer user ID from ${this.peerUserId?.slice(0, 8) || 'null'} to ${userId?.slice(0, 8) || 'null'}`)
+    this.peerUserId = userId
+    logger.log(`👥 WebRTCService: Peer user ID set to ${userId?.slice(0, 8) || 'null'}`)
+  }
+
+  // Отправка статуса микрофона собеседнику
+  async sendMuteStatus(isMuted: boolean) {
+    console.log(`🎤 sendMuteStatus called: isMuted=${isMuted}, peerUserId=${this.peerUserId?.slice(0, 8) || 'null'}, currentUserId=${this.currentUserId?.slice(0, 8) || 'null'}`)
+
+    if (!this.peerUserId) {
+      console.warn('❌ Cannot send mute status: no peer user ID')
+      logger.warn('Cannot send mute status: no peer user ID')
+      return
+    }
+
+    if (!this.currentUserId) {
+      console.warn('❌ Cannot send mute status: no current user ID')
+      return
+    }
+
+    try {
+      console.log(`📤 Sending mute status signal: type='mute_status', from=${this.currentUserId.slice(0, 8)}, to=${this.peerUserId.slice(0, 8)}, muted=${isMuted}`)
+      await this.sendSignal({
+        type: 'mute_status',
+        from: this.currentUserId,
+        to: this.peerUserId,
+        muted: isMuted
+      })
+      console.log(`✅ Mute status signal sent successfully`)
+      logger.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Sent mute status to ${this.peerUserId.slice(0, 8)}: ${isMuted ? 'muted' : 'unmuted'}`)
+    } catch (error) {
+      console.error('❌ Error sending mute status:', error)
+      logger.error('Error sending mute status:', error)
+    }
   }
 
   // Инициализация звуков для звонков
@@ -640,8 +682,8 @@ export class WebRTCService {
     logger.log('✅ WebRTC state force reset completed')
   }
 
-  private handleIncomingSignal(payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) {
-    const { type, signal, from } = payload.payload
+  private handleIncomingSignal(payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string, muted?: boolean } }) {
+    const { type, signal, from, muted } = payload.payload
 
     logger.log('📡 Received WebRTC signal:', payload)
 
@@ -658,6 +700,14 @@ export class WebRTCService {
     if (type === 'end-call') {
       logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received end call signal from ${from.slice(0, 8)}`)
       this.handleRemoteEndCall()
+      return
+    }
+
+    // Обработка mute_status сигнала
+    if (type === 'mute_status') {
+      console.log(`🎤 🔴 RECEIVED MUTE STATUS: from=${from.slice(0, 8)}, muted=${muted}, type=${typeof muted}`)
+      logger.log(`🎤 [User ${this.currentUserId.slice(0, 8)}] Received mute status from ${from.slice(0, 8)}: ${muted ? 'muted' : 'unmuted'}`)
+      this.onRemoteMutedChange?.(muted!)
       return
     }
 
@@ -782,7 +832,8 @@ export class WebRTCService {
     return this.localStream
   }
 
-  async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData }) {
+  async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData, muted?: boolean }) {
+    console.log(`📤 🔵 SENDING SIGNAL:`, data)
     try {
       if (this.peer?.destroyed) {
         logger.log('Peer destroyed, not sending signal')
@@ -808,7 +859,8 @@ export class WebRTCService {
           payload: {
             type: data.type,
             signal: data.signal,
-            from: data.from
+            from: data.from,
+            muted: data.muted
           }
         })
 
@@ -826,7 +878,8 @@ export class WebRTCService {
             body: JSON.stringify({
               to: data.to,
               from: data.from,
-              signal: data.signal
+              signal: data.signal,
+              muted: data.muted
             })
           })
 
@@ -857,5 +910,6 @@ export class WebRTCService {
       return []
     }
   }
+
 }
 

@@ -108,6 +108,18 @@ BEGIN
 END
 $$;
 
+-- Добавление поля mute_status для синхронизации статуса микрофона
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'profiles'
+                 AND column_name = 'mute_status'
+                 AND table_schema = 'public') THEN
+    ALTER TABLE public.profiles ADD COLUMN mute_status BOOLEAN DEFAULT FALSE;
+  END IF;
+END
+$$;
+
 -- Создание bucket для аватаров
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('avatars', 'avatars', true)
@@ -140,6 +152,25 @@ SELECT
 FROM auth.users
 WHERE id NOT IN (SELECT id FROM public.profiles)
 ON CONFLICT (id) DO NOTHING;
+
+-- ВКЛЮЧАЕМ RLS ОБРАТНО С ПРАВИЛЬНЫМИ ПОЛИТИКАМИ
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- Удаляем старую политику, если она существует
+DROP POLICY IF EXISTS "Users can view all profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Realtime access for authenticated users" ON public.profiles;
+
+-- Создаем правильные политики для чтения и обновления профилей
+CREATE POLICY "Users can view all profiles" ON public.profiles
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Users can update their own profile" ON public.profiles
+  FOR UPDATE USING (auth.uid() = id);
+
+-- Специальная политика для realtime доступа (позволяет получать изменения от всех пользователей)
+CREATE POLICY "Realtime access for authenticated users" ON public.profiles
+  FOR ALL USING (auth.uid() IS NOT NULL);
 
 -- Функция для обновления raw_user_meta_data (доступна аутентифицированным пользователям)
 CREATE OR REPLACE FUNCTION update_user_metadata(user_id UUID, display_name TEXT, full_name TEXT)

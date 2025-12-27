@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { logger } from '@/lib/logger'
+import { MdEmail } from 'react-icons/md'
 
 interface AuthFormProps {
   initialMode?: 'login' | 'register'
@@ -265,13 +265,7 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#4E4E50]/10 backdrop-blur-lg p-6 sm:p-8 rounded-2xl border border-[#4E4E50]/30 shadow-2xl w-full max-w-md">
             <div className="flex flex-col items-center mb-3 sm:mb-4">
-              <Image
-                src="/images/favicon.ico"
-                alt="Звоночек"
-                width={48}
-                height={48}
-                className="w-12 h-12 mb-2"
-              />
+              <MdEmail className="w-12 h-12 text-[#950740] mb-2" />
               <h2 className="text-xl sm:text-2xl font-bold text-center bg-gradient-to-r from-[#950740] to-[#C3073F] bg-clip-text text-transparent">
                 Почта отправлена!
               </h2>

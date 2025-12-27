@@ -22,11 +22,18 @@ export default function AudioCallPage() {
   const [allUsers, setAllUsers] = useState<User[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [incomingCallerId, setIncomingCallerId] = useState<string | null>(null)
+  const [currentPeerId, setCurrentPeerId] = useState<string | null>(null)
   const [contacts, setContacts] = useState<string[]>([])
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [isLoadingUsers, setIsLoadingUsers] = useState(false) // Флаг для предотвращения одновременных вызовов
   const [voiceActivity, setVoiceActivity] = useState<{ local: boolean, remote: boolean }>({ local: false, remote: false })
+  const [remoteMuted, setRemoteMuted] = useState(false)
+
+  // Debug: отслеживаем изменения remoteMuted
+  useEffect(() => {
+    console.log(`🎤 remoteMuted changed to: ${remoteMuted}`)
+  }, [remoteMuted])
 
   // Settings modal state
   const [settingsUser, setSettingsUser] = useState<User | null>(null)
@@ -264,10 +271,34 @@ export default function AudioCallPage() {
         if (state === 'receiving') {
           const callerId = webrtcServiceRef.current?.getIncomingCallerId() || null
           setIncomingCallerId(callerId)
+          setCurrentPeerId(callerId) // Устанавливаем собеседника при входящем звонке
+          // Устанавливаем peerUserId в WebRTCService
+          if (webrtcServiceRef.current && callerId) {
+            webrtcServiceRef.current.setPeerUserId(callerId)
+          }
+          // Начальный статус микрофона будет получен через WebRTC канал при подключении
           // Peer автоматически инициализируется в WebRTCService при получении offer
           logger.log(`📞 Входящий звонок от пользователя ${callerId?.slice(0, 8)}...`)
         } else if (state === 'connected') {
-          setIncomingCallerId(null)
+          // Сохраняем информацию о собеседнике для определения currentPeerUser
+          const peerId = targetUserId || incomingCallerId
+          if (peerId) {
+            setCurrentPeerId(peerId)
+            // Устанавливаем peerUserId в WebRTCService
+            if (webrtcServiceRef.current) {
+              webrtcServiceRef.current.setPeerUserId(peerId)
+              // Отправляем текущий статус микрофона собеседнику при подключении
+              webrtcServiceRef.current.sendMuteStatus(isMuted)
+              console.log(`🎤 Call connected with peer: ${peerId.slice(0, 8)}, sent current mute status: ${isMuted}`)
+            }
+          }
+        } else if (state === 'idle') {
+          // Очищаем при завершении звонка
+          setCurrentPeerId(null)
+          // Очищаем peerUserId в WebRTCService
+          if (webrtcServiceRef.current) {
+            webrtcServiceRef.current.setPeerUserId(null)
+          }
         }
       },
       onRemoteStream: (stream) => {
@@ -283,6 +314,10 @@ export default function AudioCallPage() {
       onError: (error) => {
         setError(error)
         setIncomingCallerId(null)
+      },
+      onRemoteMutedChange: (muted) => {
+        setRemoteMuted(muted)
+        console.log(`🎤 Remote mic status changed: ${muted ? 'muted' : 'unmuted'}`)
       },
     })
 
@@ -345,14 +380,11 @@ export default function AudioCallPage() {
     }
   }, [currentUser, supabase])
 
-  // Realtime обновление статуса пользователей
+  // Realtime обновление списка пользователей (для онлайн статуса)
   useEffect(() => {
-    if (!currentUser) {
-      logger.log('Realtime effect: No current user, skipping')
-      return
-    }
+    if (!currentUser) return
 
-    // Подписка на изменения в таблице profiles для реального времени
+    // Подписка на изменения в таблице profiles только для обновления списка пользователей
     const profilesChannel = supabase
       .channel('profiles_realtime')
       .on('postgres_changes', {
@@ -360,11 +392,8 @@ export default function AudioCallPage() {
         schema: 'public',
         table: 'profiles'
       }, (payload) => {
-        logger.log('Profile change detected:', payload)
-
         // Если изменился профиль текущего пользователя, обновляем его данные
         if (payload.new && typeof payload.new === 'object' && 'id' in payload.new && payload.new.id === currentUser.id) {
-          logger.log('Current user profile updated:', payload.new)
           const profileData = payload.new as User
           setCurrentUser({
             id: profileData.id || currentUser.id,
@@ -414,15 +443,18 @@ export default function AudioCallPage() {
           }
         })
       })
-      .subscribe()
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Subscribed to profiles realtime for user updates')
+        }
+      })
 
     // Также обновляем статусы каждые 30 секунд для надежности
     const usersUpdateInterval = setInterval(() => {
-      // Не запускаем загрузку, если уже идет загрузка
       if (!isLoadingUsers && currentUser) {
         loadUsers()
       }
-    }, 30 * 1000) // 30 секунд
+    }, 30 * 1000)
 
     return () => {
       clearInterval(usersUpdateInterval)
@@ -529,6 +561,14 @@ export default function AudioCallPage() {
     }
     setError(null)
     setTargetUserId(userId)
+    setCurrentPeerId(userId) // Устанавливаем собеседника сразу при начале звонка
+    // Устанавливаем peerUserId в WebRTCService
+    if (webrtcServiceRef.current) {
+      webrtcServiceRef.current.setPeerUserId(userId)
+    }
+
+    // Начальный статус микрофона будет получен через WebRTC канал при подключении
+
     await webrtcServiceRef.current?.startCall(userId)
   }
 
@@ -558,7 +598,23 @@ export default function AudioCallPage() {
 
   const handleEndCall = async () => {
     await webrtcServiceRef.current?.endCall()
+
+    // Сбрасываем статус микрофона в базе данных
+    if (currentUser) {
+      try {
+        await supabase
+          .from('profiles')
+          .update({ mute_status: false })
+          .eq('id', currentUser.id)
+      } catch (error) {
+        logger.error('Error resetting mute status:', error)
+      }
+    }
+
     setTargetUserId('')
+    setIncomingCallerId(null)
+    setCurrentPeerId(null)
+    setRemoteMuted(false)
     setCallState('idle')
   }
 
@@ -740,13 +796,32 @@ export default function AudioCallPage() {
     }
   }
 
-  const toggleMute = () => {
+  const toggleMute = async () => {
     if (localAudioRef.current && localAudioRef.current.srcObject) {
       const stream = localAudioRef.current.srcObject as MediaStream
+      const newMutedState = !isMuted
+
+      // Меняем локальное состояние и audio track
       stream.getAudioTracks().forEach(track => {
-        track.enabled = !track.enabled
+        track.enabled = !newMutedState
       })
-      setIsMuted(!isMuted)
+      setIsMuted(newMutedState)
+
+      console.log(`🎤 Local mic toggled to: ${newMutedState ? 'muted' : 'unmuted'}`)
+      console.log(`🔍 Current call state: ${callState}, currentPeerId: ${currentPeerId}`)
+
+      // Отправляем статус собеседнику через WebRTC канал
+      if (callState === 'connected' && webrtcServiceRef.current) {
+        console.log(`🔍 WebRTC service exists, sending mute status...`)
+        try {
+          await webrtcServiceRef.current.sendMuteStatus(newMutedState)
+          console.log(`📡 Sent mic status update to peer: ${newMutedState ? 'muted' : 'unmuted'}`)
+        } catch (error) {
+          console.error('❌ Error sending mic status update:', error)
+        }
+      } else {
+        console.log(`⚠️ Cannot send mute status: callState=${callState}, webrtcService=${!!webrtcServiceRef.current}`)
+      }
     }
   } 
 
@@ -792,11 +867,13 @@ export default function AudioCallPage() {
         users={users}
         targetUserId={targetUserId}
         incomingCallerId={incomingCallerId}
+        currentPeerId={currentPeerId}
         voiceActivity={voiceActivity}
         isMuted={isMuted}
+        remoteMuted={remoteMuted}
         onAcceptCall={() => {
           webrtcServiceRef.current?.answerCall(incomingCallerId || '')
-          setIncomingCallerId(null)
+          // Не сбрасываем incomingCallerId, чтобы знать с кем разговариваем
         }}
         onRejectCall={() => {
           webrtcServiceRef.current?.endCall()
