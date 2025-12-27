@@ -5,9 +5,7 @@ export const createClient = () => {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   if (!supabaseUrl || !supabaseKey) {
-    console.warn('Missing Supabase environment variables, using placeholder values')
-    // Используем placeholder значения для сборки
-    return createBrowserClient('https://placeholder.supabase.co', 'placeholder-key')
+    throw new Error('Missing required Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
   }
 
   return createBrowserClient(supabaseUrl, supabaseKey)

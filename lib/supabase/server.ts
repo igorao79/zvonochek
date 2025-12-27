@@ -7,20 +7,8 @@ export const createClient = async () => {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // В режиме сборки/SSR переменные могут быть недоступны
   if (!supabaseUrl || !supabaseKey) {
-    console.warn('Missing Supabase environment variables, using placeholder values')
-    // Используем placeholder значения для сборки
-    return createServerClient('https://placeholder.supabase.co', 'placeholder-key', {
-      cookies: {
-        getAll() {
-          return []
-        },
-        setAll() {
-          // noop
-        },
-      },
-    })
+    throw new Error('Missing required Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
   }
 
   return createServerClient(supabaseUrl, supabaseKey, {

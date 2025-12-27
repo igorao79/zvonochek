@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
+import { logger } from '@/lib/logger'
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,11 +35,11 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    console.log(`📤 HTTP API: Signal sent from ${from.slice(0, 8)} to ${to.slice(0, 8)}: ${signal.type}`)
+    logger.log(`📤 HTTP API: Signal sent from ${from.slice(0, 8)} to ${to.slice(0, 8)}: ${signal.type}`)
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Error in signal API:', error)
+    logger.error('Error in signal API:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

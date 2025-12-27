@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { logger } from '@/lib/logger'
 
 export async function GET() {
   try {
@@ -8,13 +9,13 @@ export async function GET() {
     // Получаем текущего пользователя
     const { data: { user }, error: userError } = await supabase.auth.getUser()
 
-    console.log('Current user check:', {
+    logger.log('Current user check:', {
       user: user ? { id: user.id, email: user.email } : null,
       error: userError
     })
 
     if (userError || !user) {
-      console.log('User not authenticated, returning 401')
+      logger.log('User not authenticated, returning 401')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -25,10 +26,10 @@ export async function GET() {
       .limit(1)
 
     if (tableError) {
-      console.error('Table check error:', tableError)
+      logger.error('Table check error:', tableError)
 
       if (tableError.code === '42P01') { // relation does not exist
-        console.log('Table profiles does not exist')
+        logger.log('Table profiles does not exist')
 
         // Попробуем создать профиль для текущего пользователя
         const { error: insertError } = await supabase
@@ -40,7 +41,7 @@ export async function GET() {
           })
 
         if (insertError) {
-          console.error('Error creating profile:', insertError)
+          logger.error('Error creating profile:', insertError)
         }
 
         return NextResponse.json({
@@ -63,14 +64,14 @@ export async function GET() {
       .select('id, email, display_name, full_name, avatar_url, last_seen, created_at, updated_at')
       .order('created_at', { ascending: false })
 
-    console.log('Users query result:', {
+    logger.log('Users query result:', {
       usersCount: users?.length || 0,
       error: usersError,
       currentUserId: user.id
     })
 
     if (usersError) {
-      console.error('Error fetching users:', usersError)
+      logger.error('Error fetching users:', usersError)
       return NextResponse.json({
         error: 'Failed to fetch users',
         details: usersError.message,
@@ -101,7 +102,7 @@ export async function GET() {
       online: currentUserProfile.last_seen ? new Date(currentUserProfile.last_seen) > onlineThreshold : false
     } : null
 
-    console.log('Returning users:', usersWithStatus.length)
+    logger.log('Returning users:', usersWithStatus.length)
 
     return NextResponse.json({
       users: usersWithStatus,
@@ -113,7 +114,7 @@ export async function GET() {
       }
     })
   } catch (error) {
-    console.error('Unexpected error in users API:', error)
+    logger.error('Unexpected error in users API:', error)
     return NextResponse.json({
       error: 'Internal server error',
       details: error instanceof Error ? error.message : 'Unknown error'

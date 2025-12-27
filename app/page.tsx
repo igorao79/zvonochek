@@ -6,6 +6,7 @@ import { WebRTCService, WebRTCRefs } from '@/lib/webrtc'
 import { CallState, User } from '@/lib/types'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { logger } from '@/lib/logger'
 import Header from '@/components/Header'
 import CallInterface from '@/components/CallInterface'
 import UserList from '@/components/UserList'
@@ -65,22 +66,22 @@ export default function AudioCallPage() {
   const loadUsers = async (userOverride?: User) => {
     const userToUse = userOverride || currentUser
     if (!userToUse) {
-      console.log('loadUsers: No current user, skipping')
+      logger.log('loadUsers: No current user, skipping')
       return
     }
 
     if (isLoadingUsers) {
-      console.log('loadUsers: Already loading, skipping duplicate call')
+      logger.log('loadUsers: Already loading, skipping duplicate call')
       return
     }
 
-    console.log('loadUsers: Starting user load')
+    logger.log('loadUsers: Starting user load')
     setIsLoadingUsers(true)
     setLoadingUsers(true)
 
     // Таймаут для предотвращения бесконечной загрузки
     const timeoutId = setTimeout(() => {
-      console.warn('User loading timeout - forcing stop loading')
+      logger.warn('User loading timeout - forcing stop loading')
       setLoadingUsers(false)
     }, 10000) // 10 секунд таймаут
 
@@ -88,7 +89,7 @@ export default function AudioCallPage() {
       const controller = new AbortController()
       const timeoutId2 = setTimeout(() => controller.abort(), 8000) // 8 секунд на запрос
 
-      console.log('Starting users fetch...')
+      logger.log('Starting users fetch...')
 
       const response = await fetch('/api/users', {
         signal: controller.signal,
@@ -98,14 +99,14 @@ export default function AudioCallPage() {
       })
 
       clearTimeout(timeoutId2)
-      console.log('Users fetch completed with status:', response.status)
+      logger.log('Users fetch completed with status:', response.status)
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
       const data = await response.json()
-      console.log('Users data received:', { usersCount: data.users?.length || 0, hasError: !!data.error })
+      logger.log('Users data received:', { usersCount: data.users?.length || 0, hasError: !!data.error })
 
       if (data.users) {
         // Сохраняем всех пользователей
@@ -115,45 +116,45 @@ export default function AudioCallPage() {
         const filteredUsers = data.users.filter((user: User) =>
           user.id !== userToUse.id && !contacts.includes(user.id)
         )
-        console.log('All users count:', data.users.length, 'Filtered users count:', filteredUsers.length)
+        logger.log('All users count:', data.users.length, 'Filtered users count:', filteredUsers.length)
         setUsers(filteredUsers)
       } else {
-        console.warn('No users data received, setting empty list')
+        logger.warn('No users data received, setting empty list')
         setUsers([])
       }
     } catch (error) {
-      console.error('Error loading users:', error)
+      logger.error('Error loading users:', error)
       // В случае ошибки показываем пустой список
       setUsers([])
 
       if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') {
-        console.warn('Request was aborted due to timeout')
+        logger.warn('Request was aborted due to timeout')
       }
     } finally {
       clearTimeout(timeoutId)
       setLoadingUsers(false)
       setIsLoadingUsers(false)
-      console.log('loadUsers: Finished loading')
+      logger.log('loadUsers: Finished loading')
     }
   }
 
   useEffect(() => {
     // Предотвращаем повторную инициализацию
     if (initCompletedRef.current) {
-      console.log('initApp: Already initialized, skipping')
+      logger.log('initApp: Already initialized, skipping')
       return
     }
 
     // Инициализация пользователя и каналов - запускается только один раз при монтировании
     const initApp = async () => {
-      console.log('initApp: Starting initialization')
+      logger.log('initApp: Starting initialization')
 
       // Ждем небольшую задержку для стабильности
       await new Promise(resolve => setTimeout(resolve, 100))
 
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
-        console.log('initApp: No authenticated user found, redirecting to login')
+        logger.log('initApp: No authenticated user found, redirecting to login')
         router.push('/login')
         return
       }
@@ -191,9 +192,9 @@ export default function AudioCallPage() {
       if (webrtcServiceRef.current) {
         try {
           await webrtcServiceRef.current.initializeSignalChannel()
-          console.log(`✅ [User ${user.id.slice(0, 8)}] Signal channel ready for incoming calls`)
+          logger.log(`✅ [User ${user.id.slice(0, 8)}] Signal channel ready for incoming calls`)
         } catch (err) {
-          console.error('Error initializing signal channel:', err)
+          logger.error('Error initializing signal channel:', err)
         }
       }
 
@@ -206,7 +207,7 @@ export default function AudioCallPage() {
 
       let currentUserData = null
       if (!userProfileError && userProfile) {
-        console.log('initApp: Setting current user profile')
+        logger.log('initApp: Setting current user profile')
         currentUserData = {
           id: userProfile.id,
           email: userProfile.email,
@@ -225,7 +226,7 @@ export default function AudioCallPage() {
         try {
           setContacts(JSON.parse(savedContacts))
         } catch (e) {
-          console.error('Error loading contacts:', e)
+          logger.error('Error loading contacts:', e)
         }
       }
 
@@ -233,16 +234,16 @@ export default function AudioCallPage() {
       await new Promise(resolve => setTimeout(resolve, 300))
 
       // Загружаем список всех пользователей
-      console.log('initApp: Loading users')
+      logger.log('initApp: Loading users')
       if (currentUserData) {
         await loadUsers(currentUserData)
       } else {
-        console.warn('initApp: No user profile available for loading users')
+        logger.warn('initApp: No user profile available for loading users')
       }
 
       // Отмечаем завершение инициализации
       initCompletedRef.current = true
-      console.log('initApp: Initialization completed')
+      logger.log('initApp: Initialization completed')
     }
 
     initApp()
@@ -264,7 +265,7 @@ export default function AudioCallPage() {
           const callerId = webrtcServiceRef.current?.getIncomingCallerId() || null
           setIncomingCallerId(callerId)
           // Peer автоматически инициализируется в WebRTCService при получении offer
-          console.log(`📞 Входящий звонок от пользователя ${callerId?.slice(0, 8)}...`)
+          logger.log(`📞 Входящий звонок от пользователя ${callerId?.slice(0, 8)}...`)
         } else if (state === 'connected') {
           setIncomingCallerId(null)
         }
@@ -293,7 +294,7 @@ export default function AudioCallPage() {
   // Синхронизация онлайн статуса с Supabase
   useEffect(() => {
     if (!currentUser) {
-      console.log('Online status effect: No current user, skipping')
+      logger.log('Online status effect: No current user, skipping')
       return
     }
 
@@ -305,10 +306,10 @@ export default function AudioCallPage() {
           .eq('id', currentUser.id)
 
         if (error) {
-          console.warn('Failed to update online status:', error)
+          logger.warn('Failed to update online status:', error)
         }
       } catch (error) {
-        console.warn('Network error updating online status:', error)
+        logger.warn('Network error updating online status:', error)
       }
     }
 
@@ -347,7 +348,7 @@ export default function AudioCallPage() {
   // Realtime обновление статуса пользователей
   useEffect(() => {
     if (!currentUser) {
-      console.log('Realtime effect: No current user, skipping')
+      logger.log('Realtime effect: No current user, skipping')
       return
     }
 
@@ -359,11 +360,11 @@ export default function AudioCallPage() {
         schema: 'public',
         table: 'profiles'
       }, (payload) => {
-        console.log('Profile change detected:', payload)
+        logger.log('Profile change detected:', payload)
 
         // Если изменился профиль текущего пользователя, обновляем его данные
         if (payload.new && typeof payload.new === 'object' && 'id' in payload.new && payload.new.id === currentUser.id) {
-          console.log('Current user profile updated:', payload.new)
+          logger.log('Current user profile updated:', payload.new)
           const profileData = payload.new as User
           setCurrentUser({
             id: profileData.id || currentUser.id,
@@ -485,7 +486,7 @@ export default function AudioCallPage() {
 
           // Debug logging (only sometimes to avoid spam)
           if (Math.random() < 0.01) { // Log 1% of the time
-            console.log('Voice activity levels:', {
+            logger.log('Voice activity levels:', {
               local: newVoiceActivity.local ? 'ACTIVE' : 'quiet',
               remote: newVoiceActivity.remote ? 'ACTIVE' : 'quiet',
               localLevel: localAnalyser ? (new Uint8Array(localAnalyser.frequencyBinCount).reduce((a: number, b: number) => a + b) / localAnalyser.frequencyBinCount) : 0,
@@ -499,7 +500,7 @@ export default function AudioCallPage() {
 
         detectVoice()
       } catch (error) {
-        console.warn('Voice detection initialization failed:', error)
+        logger.warn('Voice detection initialization failed:', error)
       }
     }
 
@@ -551,7 +552,7 @@ export default function AudioCallPage() {
         user.id !== currentUser.id && !contacts.includes(user.id)
       )
       setUsers(filteredUsers)
-      console.log('Auto-filtered users count:', filteredUsers.length)
+      logger.log('Auto-filtered users count:', filteredUsers.length)
     }
   }, [contacts, allUsers, currentUser])
 
@@ -600,7 +601,7 @@ export default function AudioCallPage() {
       setSettingsUser(userData)
       setSettingsDisplayName(userData.display_name || '')
     } catch (error) {
-      console.error('Error loading profile for settings:', error)
+      logger.error('Error loading profile for settings:', error)
     } finally {
       setSettingsLoading(false)
     }
@@ -631,7 +632,7 @@ export default function AudioCallPage() {
 
       closeSettingsModal()
     } catch (error) {
-      console.error('Error saving profile:', error)
+      logger.error('Error saving profile:', error)
       alert('Ошибка сохранения профиля')
     } finally {
       setSettingsSaving(false)
@@ -681,7 +682,7 @@ export default function AudioCallPage() {
       setSettingsUser(updatedUser)
       setCurrentUser(updatedUser)
     } catch (error) {
-      console.error('Error uploading avatar:', error)
+      logger.error('Error uploading avatar:', error)
       alert('Ошибка загрузки аватара')
     } finally {
       setSettingsUploading(false)
@@ -734,7 +735,7 @@ export default function AudioCallPage() {
         alert('Ошибка создания профиля: ' + data.error)
       }
     } catch (error) {
-      console.error('Error creating profile:', error)
+      logger.error('Error creating profile:', error)
       alert('Не удалось создать профиль')
     }
   }

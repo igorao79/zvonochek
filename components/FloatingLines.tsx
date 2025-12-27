@@ -11,6 +11,7 @@ import {
 } from 'three';
 
 import './FloatingLines.css';
+import { logger } from '@/lib/logger';
 
 const vertexShader = `
 precision highp float;
@@ -303,7 +304,7 @@ const FloatingLines = memo(function FloatingLines({
   useEffect(() => {
     if (!containerRef.current) return;
 
-    console.log('🎨 Initializing FloatingLines WebGL scene');
+    logger.log('🎨 Initializing FloatingLines WebGL scene');
 
     const scene = new Scene();
     const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -412,12 +413,12 @@ const FloatingLines = memo(function FloatingLines({
         const width = window.innerWidth;
         const height = window.innerHeight;
 
-        console.log(`📏 Window size: ${width}x${height}`);
+        logger.log(`📏 Window size: ${width}x${height}`);
 
         if (width > 0 && height > 0) {
           renderer.setSize(width, height);
           uniforms.iResolution.value.set(width, height, 1);
-          console.log(`📏 FloatingLines resized: ${width}x${height}`);
+          logger.log(`📏 FloatingLines resized: ${width}x${height}`);
         }
       }, 50);
     };
@@ -454,7 +455,7 @@ const FloatingLines = memo(function FloatingLines({
 
     const handlePointerLeave = () => {
       if (!interactive) return;
-      console.log('👆 Mouse left canvas');
+      logger.log('👆 Mouse left canvas');
       targetInfluenceRef.current = 0.0;
     };
 
@@ -497,7 +498,7 @@ const FloatingLines = memo(function FloatingLines({
     renderLoop();
 
     return () => {
-      console.log('🧹 Cleaning up FloatingLines WebGL scene');
+      logger.log('🧹 Cleaning up FloatingLines WebGL scene');
       cancelAnimationFrame(raf);
       if (ro) ro.disconnect();
       if (interactive) {
