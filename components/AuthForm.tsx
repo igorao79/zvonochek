@@ -135,8 +135,8 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
           password,
         })
         if (error) throw error
-        router.push('/')
-        router.refresh()
+        // Используем window.location для полного редиректа, чтобы middleware увидел новую сессию
+        window.location.href = '/'
       }
     } catch (err: any) {
       setError(err.message)

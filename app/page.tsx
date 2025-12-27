@@ -148,12 +148,23 @@ export default function AudioCallPage() {
     const initApp = async () => {
       logger.log('initApp: Starting initialization')
 
-      // Ждем небольшую задержку для стабильности
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // Ждем небольшую задержку для синхронизации сессии после входа
+      await new Promise(resolve => setTimeout(resolve, 500))
 
-      const { data: { user } } = await supabase.auth.getUser()
+      // Проверяем сессию несколько раз для надежности
+      let user = null
+      for (let i = 0; i < 3; i++) {
+        const { data: { user: currentUser } } = await supabase.auth.getUser()
+        if (currentUser) {
+          user = currentUser
+          break
+        }
+        // Ждем между проверками
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
       if (!user) {
-        logger.log('initApp: No authenticated user found, redirecting to login')
+        logger.log('initApp: No authenticated user found after retries, redirecting to login')
         router.push('/login')
         return
       }
