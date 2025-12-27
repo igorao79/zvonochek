@@ -9,7 +9,6 @@ export const metadata: Metadata = {
   description: 'Приложение для видеозвонков на базе WebRTC и Supabase',
   icons: {
     icon: '/images/favicon.ico',
-    shortcut: '/images/favicon.ico',
   },
 }
 

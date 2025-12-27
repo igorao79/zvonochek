@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import Image from 'next/image'
-import { supabase } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { logger } from '@/lib/logger'
 
 interface AuthFormProps {
   initialMode?: 'login' | 'register'
@@ -21,7 +20,7 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
   const [emailExists, setEmailExists] = useState(false)
   const [displayNameExists, setDisplayNameExists] = useState(false)
   const router = useRouter()
-  // const supabase = createClient() - теперь используем глобальный клиент
+  const supabase = createClient()
 
   // Валидация email
   const validateEmail = async (email: string) => {
@@ -135,8 +134,8 @@ export default function AuthForm({ initialMode = 'login' }: AuthFormProps) {
           password,
         })
         if (error) throw error
-        // Используем window.location для полного редиректа, чтобы middleware увидел новую сессию
-        window.location.href = '/'
+        router.push('/')
+        router.refresh()
       }
     } catch (err: any) {
       setError(err.message)

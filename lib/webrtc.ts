@@ -1,8 +1,7 @@
 import SimplePeer from 'simple-peer'
-import { supabase } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { CallState } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { logger } from '@/lib/logger'
 
 // Тип для доступа к RTCPeerConnection внутри SimplePeer
 interface SimplePeerWithPC extends SimplePeer.Instance {
@@ -23,7 +22,7 @@ export class WebRTCService {
   private peer: SimplePeer.Instance | null = null
   private localStream: MediaStream | null = null
   private remoteStream: MediaStream | null = null
-  // private supabase = createClient() - теперь используем глобальный клиент
+  private supabase = createClient()
   private channel: RealtimeChannel | null = null
   private currentUserId: string = ''
   private targetUserId: string | null = null
@@ -67,7 +66,7 @@ export class WebRTCService {
       return // Уже инициализирован
     }
 
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await this.supabase.auth.getUser()
     if (!user) {
       logger.log('📺 No authenticated user, skipping channel initialization')
       return
@@ -76,7 +75,7 @@ export class WebRTCService {
     this.currentUserId = user.id
 
     // Создаем канал только для получения входящих сигналов
-    this.channel = supabase.channel(`webrtc:${this.currentUserId}`)
+    this.channel = this.supabase.channel(`webrtc:${this.currentUserId}`)
 
     this.channel
       .on('broadcast', { event: 'webrtc_signal' }, (payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) => {
@@ -119,7 +118,7 @@ export class WebRTCService {
   async initializeSounds() {
     try {
       // Загружаем рингтон
-      const { data: ringtoneData } = await supabase.storage
+      const { data: ringtoneData } = await this.supabase.storage
         .from('sounds')
         .getPublicUrl('ringtone.mp3')
 
@@ -130,7 +129,7 @@ export class WebRTCService {
       }
 
       // Загружаем звук окончания звонка
-      const { data: endCallData } = await supabase.storage
+      const { data: endCallData } = await this.supabase.storage
         .from('sounds')
         .getPublicUrl('endcall.mp3')
 
@@ -242,6 +241,7 @@ export class WebRTCService {
     // Отправляем сигнал завершения через Supabase канал
     if (this.targetUserId) {
       try {
+        const supabase = createClient()
         const targetChannel = supabase.channel(`webrtc:${this.targetUserId}`)
         await targetChannel.subscribe()
 
@@ -448,7 +448,7 @@ export class WebRTCService {
   disconnect() {
     this.cleanup()
     if (this.channel) {
-      supabase.removeChannel(this.channel)
+      this.supabase.removeChannel(this.channel)
       this.channel = null
     }
     // Очищаем все каналы
@@ -631,7 +631,7 @@ export class WebRTCService {
 
     // Очищаем каналы
     if (this.channel) {
-      supabase.removeChannel(this.channel)
+      this.supabase.removeChannel(this.channel)
       this.channel = null
     }
 
@@ -794,6 +794,7 @@ export class WebRTCService {
 
       // Способ 1: Через realtime канал с явным httpSend
       try {
+        const supabase = createClient()
         const targetChannel = supabase.channel(`webrtc:${data.to}`)
 
         // Подписываемся на канал

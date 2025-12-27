@@ -5,8 +5,7 @@ import { useState } from 'react'
 import Image from 'next/image'
 import { User } from '@/lib/types'
 import { FiX, FiUpload } from 'react-icons/fi'
-import { supabase } from '@/lib/supabase/client'
-import { logger } from '@/lib/logger'
+import { createClient } from '@/lib/supabase/client'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -32,7 +31,7 @@ export default function SettingsModal({
   onSave
 }: SettingsModalProps) {
   const [displayNameExists, setDisplayNameExists] = useState(false)
-  // const supabase = createClient() - теперь используем глобальный клиент
+  const supabase = createClient()
 
   // Валидация display name
   const validateDisplayName = async (name: string, currentUserId?: string) => {
