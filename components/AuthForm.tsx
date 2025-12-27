@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { logger } from '@/lib/logger'
 
 interface AuthFormProps {
   initialMode?: 'login' | 'register'

@@ -2,6 +2,7 @@ import SimplePeer from 'simple-peer'
 import { createClient } from '@/lib/supabase/client'
 import { CallState } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
+import { logger } from '@/lib/logger'
 
 // Тип для доступа к RTCPeerConnection внутри SimplePeer
 interface SimplePeerWithPC extends SimplePeer.Instance {

@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { User } from '@/lib/types'
 import { FiX, FiUpload } from 'react-icons/fi'
 import { createClient } from '@/lib/supabase/client'
+import { logger } from '@/lib/logger'
 
 interface SettingsModalProps {
   isOpen: boolean
