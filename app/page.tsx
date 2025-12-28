@@ -567,7 +567,8 @@ export default function AudioCallPage() {
       webrtcServiceRef.current.setPeerUserId(userId)
     }
 
-    // Начальный статус микрофона будет получен через WebRTC канал при подключении
+    // Всегда начинаем со включенным микрофоном
+    setIsMuted(false)
 
     await webrtcServiceRef.current?.startCall(userId)
   }
@@ -872,6 +873,8 @@ export default function AudioCallPage() {
         isMuted={isMuted}
         remoteMuted={remoteMuted}
         onAcceptCall={() => {
+          // Всегда начинаем со включенным микрофоном при ответе на звонок
+          setIsMuted(false)
           webrtcServiceRef.current?.answerCall(incomingCallerId || '')
           // Не сбрасываем incomingCallerId, чтобы знать с кем разговариваем
         }}

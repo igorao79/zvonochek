@@ -128,7 +128,7 @@ export default function CallInterface({
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 relative z-10">
           {/* Левая сторона - пользователь */}
-            <div className="flex flex-col items-center gap-1 sm:gap-2 relative">
+          <div className="flex flex-col items-center gap-1 sm:gap-2 relative w-24">
               <div className={`w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 ${
                 callState === 'connected' && voiceActivity.local ? 'ring-4 ring-[#C3073F] animate-pulse' : ''
               }`}>
@@ -227,7 +227,7 @@ export default function CallInterface({
               )}
 
               {/* Центральная иконка */}
-              <div className="flex flex-col items-center justify-center mx-8 gap-2" style={typeof window !== 'undefined' && window.innerWidth >= 1024 ? { marginLeft: '20px' } : {}}>
+              <div className="flex flex-col items-center justify-center mx-8 gap-2 lg:ml-[20px]">
                 {callState === 'idle' && <FiPhone className="text-4xl text-[#6F2232]" />}
                 {callState === 'calling' && <FiPhoneCall className="text-4xl text-[#950740] animate-pulse" />}
                 {callState === 'receiving' && <FiPhoneIncoming className="text-4xl text-[#C3073F]" />}
@@ -308,9 +308,9 @@ export default function CallInterface({
           </div>
 
           {/* Правая сторона - собеседник */}
-          <div className="flex flex-col items-center gap-1 sm:gap-2 relative">
+          <div className="flex flex-col items-center gap-1 sm:gap-2 relative w-24">
             <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 ${
-              callState === 'connected' ? (voiceActivity.local || voiceActivity.remote ? 'ring-4 ring-[#C3073F] animate-pulse' : 'ring-2 ring-[#6F2232]') :
+              callState === 'connected' ? (voiceActivity.local || (voiceActivity.remote && !remoteMuted) ? 'ring-4 ring-[#C3073F] animate-pulse' : 'ring-2 ring-[#6F2232]') :
               callState === 'receiving' ? 'ring-2 ring-[#C3073F] animate-pulse' : ''
             }`}>
               {callState === 'idle' && (
@@ -383,7 +383,7 @@ export default function CallInterface({
                 {callState === 'idle' && 'Ожидание'}
                 {callState === 'calling' && (currentPeerUser?.display_name || 'Звонок...')}
                 {callState === 'receiving' && (currentPeerUser?.display_name || 'Входящий')}
-                {callState === 'connected' && (currentPeerUser?.display_name || 'Собеседник')}
+                {callState === 'connected' && (currentPeerUser?.display_name || currentPeerUser?.email?.split('@')[0] || 'Unknown')}
               </p>
             </div>
           </div>
