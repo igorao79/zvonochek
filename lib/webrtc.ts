@@ -252,6 +252,7 @@ export class WebRTCService {
     this.targetUserId = targetUserId
     this.isCallActive = true
     this.onStateChange?.('calling')
+
     await this.initializePeer(true)
   }
 
@@ -320,18 +321,23 @@ export class WebRTCService {
         this.peer = null
       }
 
-      logger.log('Requesting microphone access...')
-      logger.log('HTTPS check:', window.location.protocol === 'https:')
+      // Запрашиваем микрофон только если его нет
+      if (!this.localStream) {
+        logger.log('Requesting microphone access...')
+        logger.log('HTTPS check:', window.location.protocol === 'https:')
 
-      // Получаем только аудио поток
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: false,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      })
+        // Получаем только аудио поток
+        this.localStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
+      } else {
+        logger.log('Using existing microphone stream')
+      }
 
       logger.log('Microphone access granted, stream:', {
         id: this.localStream.id,
