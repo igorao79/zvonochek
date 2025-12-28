@@ -50,6 +50,7 @@ export class WebRTCService {
 
   // Обработчики завершения
   private connectionCheckInterval: NodeJS.Timeout | null = null
+  private keepAliveInterval: NodeJS.Timeout | null = null
   private lastActivityTime = Date.now()
   private isOnline = true
 
@@ -389,6 +390,9 @@ export class WebRTCService {
 
         // Сбрасываем счетчик переподключений
         this.refs.reconnectAttemptsRef.current = 0
+
+        // Запускаем keep-alive механизм для поддержания соединения
+        this.startKeepAlive()
       })
 
       // Обработчик получения remote stream
@@ -488,7 +492,40 @@ export class WebRTCService {
     this.isCallActive = false
   }
 
+  // Keep-alive механизм для поддержания соединения
+  private startKeepAlive() {
+    logger.log('🚀 Starting WebRTC keep-alive mechanism')
+
+    // Отправляем keep-alive каждые 5 минут
+    this.keepAliveInterval = setInterval(() => {
+      if (this.peer && this.isCallActive && this.peerUserId) {
+        try {
+          // Отправляем пустой сигнал для поддержания соединения
+          this.sendSignal({
+            type: 'keep_alive',
+            from: this.currentUserId,
+            to: this.peerUserId
+          })
+          logger.log('💓 Keep-alive sent to maintain connection')
+        } catch (error) {
+          logger.warn('Failed to send keep-alive:', error)
+        }
+      }
+    }, 5 * 60 * 1000) // 5 минут
+  }
+
+  private stopKeepAlive() {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval)
+      this.keepAliveInterval = null
+      logger.log('🛑 Keep-alive mechanism stopped')
+    }
+  }
+
   disconnect() {
+    // Останавливаем keep-alive
+    this.stopKeepAlive()
+
     this.cleanup()
     if (this.channel) {
       this.supabase.removeChannel(this.channel)
@@ -700,6 +737,13 @@ export class WebRTCService {
     if (type === 'end-call') {
       logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received end call signal from ${from.slice(0, 8)}`)
       this.handleRemoteEndCall()
+      return
+    }
+
+    // Обработка keep_alive сигнала
+    if (type === 'keep_alive') {
+      logger.log(`💓 [User ${this.currentUserId.slice(0, 8)}] Received keep-alive from ${from.slice(0, 8)}`)
+      // Ничего не делаем, просто подтверждаем получение
       return
     }
 
