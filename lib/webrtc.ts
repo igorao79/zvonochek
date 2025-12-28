@@ -675,8 +675,11 @@ export class WebRTCService {
           const pc = (this.peer as SimplePeerWithPC)._pc
           if (pc && pc.connectionState === 'failed') {
             logger.log('📞 Peer connection failed - ending call')
-            this.endCall()
-            this.onError?.('Соединение прервано. Звонок завершен.')
+            // Добавляем небольшую задержку перед завершением звонка
+            setTimeout(() => {
+              this.endCall()
+              this.onError?.('Соединение прервано. Попробуйте позвонить еще раз.')
+            }, 1000)
           }
         }
       }
