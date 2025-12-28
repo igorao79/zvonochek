@@ -271,6 +271,19 @@ export class WebRTCService {
     this.targetUserId = callerId
     this.isCallActive = true
     await this.initializePeer(false)
+
+    // Отправляем сигнал звонящему о том, что звонок принят
+    try {
+      await this.sendSignal({
+        type: 'call_accepted',
+        from: this.currentUserId,
+        to: callerId
+      })
+      logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Sent call accepted signal to ${callerId.slice(0, 8)}`)
+    } catch (error) {
+      logger.warn('Failed to send call accepted signal:', error)
+    }
+
     this.onStateChange?.('connected')
   }
 
@@ -750,6 +763,13 @@ export class WebRTCService {
     if (type === 'keep_alive') {
       logger.log(`💓 [User ${this.currentUserId.slice(0, 8)}] Received keep-alive from ${from.slice(0, 8)}`)
       // Ничего не делаем, просто подтверждаем получение
+      return
+    }
+
+    // Обработка call_accepted сигнала
+    if (type === 'call_accepted') {
+      logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Call accepted by ${from.slice(0, 8)}`)
+      this.onStateChange?.('connected')
       return
     }
 

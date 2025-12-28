@@ -227,7 +227,7 @@ export default function CallInterface({
               )}
 
               {/* Центральная иконка */}
-              <div className="flex flex-col items-center justify-center mx-8 gap-2 lg:ml-[20px]">
+              <div className={`flex flex-col items-center justify-center mx-8 gap-2 ${callState === 'connected' ? 'lg:ml-[20px]' : ''}`}>
                 {callState === 'idle' && <FiPhone className="text-4xl text-[#6F2232]" />}
                 {callState === 'calling' && <FiPhoneCall className="text-4xl text-[#950740] animate-pulse" />}
                 {callState === 'receiving' && <FiPhoneIncoming className="text-4xl text-[#C3073F]" />}
