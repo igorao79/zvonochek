@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import { useRef, useState, useEffect } from 'react'
 import { User, CallState } from '@/lib/types'
-import { FiPhone, FiPhoneIncoming, FiPhoneCall, FiMic, FiMicOff } from 'react-icons/fi'
+import { FiPhone, FiPhoneIncoming, FiPhoneCall, FiMicOff } from 'react-icons/fi'
 import { MdCallEnd } from 'react-icons/md'
 import { AiOutlineCheck } from 'react-icons/ai'
 
@@ -19,7 +19,6 @@ interface CallInterfaceProps {
   remoteMuted?: boolean // Статус микрофона собеседника
   onAcceptCall: () => void
   onRejectCall: () => void
-  onStartCall: (userId: string) => void
   onEndCall: () => void
   onToggleMute: () => void
 }
@@ -36,14 +35,12 @@ export default function CallInterface({
   remoteMuted = false,
   onAcceptCall,
   onRejectCall,
-  onStartCall,
   onEndCall,
   onToggleMute
 }: CallInterfaceProps) {
   const [callDuration, setCallDuration] = useState(0)
   const callStartTime = useRef<number | null>(null)
 
-  const targetUser = users.find(u => u.id === targetUserId)
   const callerUser = users.find(u => u.id === incomingCallerId)
 
   // Определяем ID текущего собеседника
@@ -71,7 +68,6 @@ export default function CallInterface({
       }
       if (callState === 'idle') {
         callStartTime.current = null
-        setCallDuration(0)
       }
     }
 
@@ -94,65 +90,68 @@ export default function CallInterface({
       <div className={`relative p-4 sm:p-6 rounded-2xl backdrop-blur-lg border-2 transition-all ${
       callState === 'idle' ? 'bg-[#4E4E50]/10 border-[#4E4E50]/20' :
       callState === 'calling' ? 'bg-[#950740]/20 border-[#950740] shadow-lg shadow-[#950740]/20' :
-      callState === 'receiving' ? 'bg-[#C3073F]/20 border-[#C3073F] shadow-lg shadow-[#C3073F]/20 animate-pulse' :
+      callState === 'receiving' ? 'bg-[#C3073F]/20 border-[#C3073F] shadow-lg shadow-[#C3073F]/20' :
       'bg-[#6F2232]/20 border-[#6F2232] shadow-lg shadow-[#6F2232]/20'
       }`}>
         {/* Статус звонка */}
-        {callState !== 'idle' && (
-          <div className="text-center mb-2">
-            {callState !== 'connected' && (
-              <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold ${
-                callState === 'calling' ? 'bg-[#950740]/20 text-[#950740] border-2 border-[#950740]/40' :
-                'bg-[#C3073F]/20 text-[#C3073F] border-2 border-[#C3073F]/40 animate-pulse'
-              }`}>
-                {callState === 'calling' && <FiPhoneCall className="w-4 h-4" />}
-                {callState === 'receiving' && <FiPhoneIncoming className="w-4 h-4" />}
-                <span>
-                  {callState === 'calling' && 'Исходящий звонок'}
-                  {callState === 'receiving' && 'Входящий звонок'}
-                </span>
-              </div>
-            )}
+        <div className={`transition-all duration-300 ${callState === 'receiving' ? 'animate-pulse' : ''}`}>
+          {callState !== 'idle' && (
+            <div className="text-center mb-2">
+              {callState === 'receiving' && (
+                <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-full text-sm font-semibold bg-[#C3073F]/20 text-[#C3073F] border-2 border-[#C3073F]/40">
+                  <FiPhoneIncoming className="w-5 h-5" />
+                  <span>Входящий звонок от {callerUser?.display_name || callerUser?.email?.split('@')[0] || 'Неизвестного'}</span>
+                </div>
+              )}
+              {callState !== 'connected' && callState !== 'receiving' && (
+                <div className={`flex flex-col items-center gap-2 px-4 py-3 rounded-full text-sm font-semibold ${
+                  callState === 'calling' ? 'bg-[#950740]/20 text-[#950740] border-2 border-[#950740]/40' :
+                  'bg-[#C3073F]/20 text-[#C3073F] border-2 border-[#C3073F]/40'
+                }`}>
+                  {callState === 'calling' && <FiPhoneCall className="w-5 h-5" />}
+                  <span>
+                    {callState === 'calling' && 'Исходящий звонок'}
+                  </span>
+                </div>
+              )}
             {callState === 'connected' && (
               <div className="flex flex-col items-center gap-1">
-                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-[#6F2232]/20 text-[#6F2232] border-2 border-[#6F2232]/40">
-                  <AiOutlineCheck className="w-4 h-4" />
+                <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-full text-sm font-semibold bg-[#6F2232]/20 text-[#6F2232] border-2 border-[#6F2232]/40">
+                  <AiOutlineCheck className="w-5 h-5" />
                   <span>На связи</span>
-                </div>
-                <div className="text-xs text-gray-400 font-mono">
-                  {formatDuration(callDuration)}
                 </div>
               </div>
             )}
           </div>
         )}
+        </div>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 relative z-10">
           {/* Левая сторона - пользователь */}
-          <div className="flex flex-col items-center gap-1 sm:gap-2">
-            <div className={`w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 relative ${
-              callState === 'connected' && voiceActivity.local ? 'ring-4 ring-[#C3073F] animate-pulse' : ''
-            }`}>
-              {currentUser?.avatar_url ? (
-                <Image
-                  src={currentUser.avatar_url}
-                  alt="Your avatar"
-                  width={40}
-                  height={40}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <span className="text-sm sm:text-lg text-white">
-                  {currentUser?.display_name?.charAt(0).toUpperCase() || currentUser?.email?.charAt(0).toUpperCase()}
-                </span>
-              )}
-              {/* Индикатор выключенного микрофона */}
+            <div className="flex flex-col items-center gap-1 sm:gap-2 relative">
+              <div className={`w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 ${
+                callState === 'connected' && voiceActivity.local ? 'ring-4 ring-[#C3073F] animate-pulse' : ''
+              }`}>
+                {currentUser?.avatar_url ? (
+                  <Image
+                    src={currentUser.avatar_url}
+                    alt="Your avatar"
+                    width={40}
+                    height={40}
+                    className="w-full h-full object-cover rounded-full"
+                  />
+                ) : (
+                  <span className="text-sm sm:text-lg text-white">
+                    {currentUser?.display_name?.charAt(0).toUpperCase() || currentUser?.email?.charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              {/* Индикатор выключенного микрофона - абсолютное позиционирование */}
               {callState === 'connected' && isMuted && (
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-red-500 border-2 border-white rounded-full flex items-center justify-center">
-                  <FiMicOff className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-white" />
+                <div className="absolute bottom-0 right-0 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
+                  <FiMicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                 </div>
               )}
-            </div>
             <div className="text-center">
               <p className="font-medium text-xs sm:text-sm">
                 {currentUser?.display_name || currentUser?.email?.split('@')[0] || 'Вы'}
@@ -228,11 +227,18 @@ export default function CallInterface({
               )}
 
               {/* Центральная иконка */}
-              <div className="flex items-center justify-center mx-8">
+              <div className="flex flex-col items-center justify-center mx-8 gap-2" style={typeof window !== 'undefined' && window.innerWidth >= 1024 ? { marginLeft: '20px' } : {}}>
                 {callState === 'idle' && <FiPhone className="text-4xl text-[#6F2232]" />}
                 {callState === 'calling' && <FiPhoneCall className="text-4xl text-[#950740] animate-pulse" />}
-                {callState === 'receiving' && <FiPhoneIncoming className="text-4xl text-[#C3073F] animate-bounce" />}
-                {callState === 'connected' && <AiOutlineCheck className="text-4xl text-[#6F2232]" />}
+                {callState === 'receiving' && <FiPhoneIncoming className="text-4xl text-[#C3073F]" />}
+                {callState === 'connected' && (
+                  <>
+                    <AiOutlineCheck className="text-4xl text-[#6F2232]" />
+                    <div className="text-sm text-gray-400 font-mono">
+                      {formatDuration(callDuration)}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Правая дуга */}
@@ -302,8 +308,8 @@ export default function CallInterface({
           </div>
 
           {/* Правая сторона - собеседник */}
-          <div className="flex flex-col items-center gap-1 sm:gap-2">
-            <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 relative ${
+          <div className="flex flex-col items-center gap-1 sm:gap-2 relative">
+            <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 ${
               callState === 'connected' ? (voiceActivity.local || voiceActivity.remote ? 'ring-4 ring-[#C3073F] animate-pulse' : 'ring-2 ring-[#6F2232]') :
               callState === 'receiving' ? 'ring-2 ring-[#C3073F] animate-pulse' : ''
             }`}>
@@ -321,10 +327,10 @@ export default function CallInterface({
                     alt="Caller avatar"
                     width={48}
                     height={48}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover rounded-full"
                   />
                 ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-[#C3073F] to-[#950740] flex items-center justify-center">
+                  <div className="w-full h-full bg-gradient-to-br from-[#C3073F] to-[#950740] rounded-full flex items-center justify-center">
                     <span className="text-white text-lg">
                       {(callerUser?.display_name || 'З').charAt(0).toUpperCase()}
                     </span>
@@ -338,10 +344,10 @@ export default function CallInterface({
                     alt="Calling avatar"
                     width={48}
                     height={48}
-                    className="w-full h-full object-cover grayscale opacity-60"
+                    className="w-full h-full object-cover rounded-full grayscale opacity-60"
                   />
                 ) : (
-                  <div className="w-full h-full bg-gray-400 flex items-center justify-center">
+                  <div className="w-full h-full bg-gray-400 rounded-full flex items-center justify-center">
                     <span className="text-white text-lg">
                       {(currentPeerUser?.display_name || 'С').charAt(0).toUpperCase()}
                     </span>
@@ -355,23 +361,23 @@ export default function CallInterface({
                     alt="Peer avatar"
                     width={48}
                     height={48}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover rounded-full"
                   />
                 ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-[#6F2232] to-[#950740] flex items-center justify-center">
+                  <div className="w-full h-full bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center">
                     <span className="text-white text-lg">
                       {(currentPeerUser?.display_name || 'С').charAt(0).toUpperCase()}
                     </span>
                   </div>
                 )
               )}
-              {/* Индикатор выключенного микрофона собеседника */}
-              {callState === 'connected' && remoteMuted && (
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 bg-red-500 border-2 border-white rounded-full flex items-center justify-center">
-                  <FiMicOff className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-white" />
-                </div>
-              )}
             </div>
+            {/* Индикатор выключенного микрофона собеседника */}
+            {callState === 'connected' && remoteMuted && (
+              <div className="absolute bottom-0 right-0 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
+                <FiMicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              </div>
+            )}
             <div className="text-center">
               <p className="font-medium text-xs sm:text-sm">
                 {callState === 'idle' && 'Ожидание'}
@@ -415,8 +421,8 @@ export default function CallInterface({
                         : 'bg-[#4E4E50]/10 hover:bg-[#4E4E50]/20 border-[#4E4E50]/30'
                     } border-2 px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 backdrop-blur-lg text-sm sm:text-base`}
                   >
-                  {isMuted ? <FiMicOff className="text-lg sm:text-xl" /> : <FiMic className="text-lg sm:text-xl" />}
                   {isMuted ? 'Включить' : 'Выключить'}
+                  {isMuted && <FiMicOff className="text-lg sm:text-xl text-red-500 ml-1" />}
                 </button>
 
                   <button

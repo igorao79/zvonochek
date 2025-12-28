@@ -880,7 +880,6 @@ export default function AudioCallPage() {
           setIncomingCallerId(null)
           setCallState('idle')
         }}
-        onStartCall={handleStartCall}
         onEndCall={handleEndCall}
         onToggleMute={toggleMute}
       />
