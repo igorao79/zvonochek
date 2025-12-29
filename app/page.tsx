@@ -2,8 +2,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import SimplePeer from 'simple-peer'
-import { WebRTCService, WebRTCRefs } from '@/lib/webrtc'
-import { CallState, User } from '@/lib/types'
+import { WebRTCService } from '@/lib/webrtc'
+import { CallState, User, PeerRefs } from '@/lib/types'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { logger } from '@/lib/logger'
@@ -18,6 +18,7 @@ export default function AudioCallPage() {
   const [error, setError] = useState<string | null>(null)
   const [targetUserId, setTargetUserId] = useState<string>('')
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [loadingProfile, setLoadingProfile] = useState(true)
   const [isMuted, setIsMuted] = useState(false)
   const [allUsers, setAllUsers] = useState<User[]>([])
   const [users, setUsers] = useState<User[]>([])
@@ -29,6 +30,7 @@ export default function AudioCallPage() {
   const [isLoadingUsers, setIsLoadingUsers] = useState(false) // Флаг для предотвращения одновременных вызовов
   const [voiceActivity, setVoiceActivity] = useState<{ local: boolean, remote: boolean }>({ local: false, remote: false })
   const [remoteMuted, setRemoteMuted] = useState(false)
+  const [remoteVoiceActivity, setRemoteVoiceActivity] = useState(false)
 
   // Debug: отслеживаем изменения remoteMuted
   useEffect(() => {
@@ -172,6 +174,7 @@ export default function AudioCallPage() {
         .eq('id', user.id)
         .single()
 
+      // Устанавливаем данные пользователя
       if (!profileError && profile) {
         setCurrentUser({
           id: user.id,
@@ -194,6 +197,9 @@ export default function AudioCallPage() {
           online: true
         })
       }
+
+      // Профиль загружен - завершаем загрузку ПОСЛЕ установки данных
+      setLoadingProfile(false)
 
       // Инициализация канала для получения входящих звонков ПЕРВЫМ ДЕЛОМ
       if (webrtcServiceRef.current) {
@@ -254,7 +260,7 @@ export default function AudioCallPage() {
     }
 
     initApp()
-    const webrtcRefs: WebRTCRefs = {
+    const webrtcRefs: PeerRefs = {
       peerRef,
       signalBufferRef,
       keepAliveIntervalRef,
@@ -318,6 +324,13 @@ export default function AudioCallPage() {
       onRemoteMutedChange: (muted) => {
         setRemoteMuted(muted)
         console.log(`🎤 Remote mic status changed: ${muted ? 'muted' : 'unmuted'}`)
+      },
+      onRemoteVoiceActivityChange: (active) => {
+        setRemoteVoiceActivity(active)
+        // Тихое логирование - не спамим в консоль
+        if (Math.random() < 0.01) { // 1% от изменений
+          console.log(`🗣️ Remote voice activity: ${active ? 'speaking' : 'quiet'}`)
+        }
       },
     })
 
@@ -526,7 +539,12 @@ export default function AudioCallPage() {
             })
           }
 
-          setVoiceActivity(newVoiceActivity)
+          setVoiceActivity({ local: newVoiceActivity.local, remote: remoteVoiceActivity })
+
+          // Отправляем статус голосовой активности собеседнику (только если изменилось)
+          if (webrtcServiceRef.current && callState === 'connected') {
+            webrtcServiceRef.current.sendVoiceActivityStatus(newVoiceActivity.local)
+          }
           animationFrame = requestAnimationFrame(detectVoice)
         }
 
@@ -857,6 +875,7 @@ export default function AudioCallPage() {
         {/* Header */}
         <Header
           currentUser={currentUser}
+          loadingProfile={loadingProfile}
           onOpenSettings={openSettingsModal}
           onLogout={handleLogout}
         />
@@ -872,6 +891,7 @@ export default function AudioCallPage() {
         voiceActivity={voiceActivity}
         isMuted={isMuted}
         remoteMuted={remoteMuted}
+        remoteVoiceActivity={remoteVoiceActivity}
         onAcceptCall={() => {
           // Всегда начинаем со включенным микрофоном при ответе на звонок
           setIsMuted(false)

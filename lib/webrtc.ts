@@ -1,22 +1,14 @@
 import SimplePeer from 'simple-peer'
 import { createClient } from '@/lib/supabase/client'
-import { CallState } from '@/lib/types'
+import { CallState, PeerRefs } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { logger } from '@/lib/logger'
+import { resilientChannelManager } from '@/utils/resilientChannelManager'
+import { handlePeerError, attemptReconnection, resetReconnectionCounter, cleanupAllPeerResources, handlePeerClose } from '@/utils/webrtcHelpers'
 
 // Тип для доступа к RTCPeerConnection внутри SimplePeer
 interface SimplePeerWithPC extends SimplePeer.Instance {
   _pc?: RTCPeerConnection
-}
-
-export interface WebRTCRefs {
-  peerRef: React.MutableRefObject<SimplePeer.Instance | null>
-  signalBufferRef: React.MutableRefObject<Array<{type: string, signal?: SimplePeer.SignalData, from: string}>>
-  keepAliveIntervalRef: React.MutableRefObject<NodeJS.Timeout | null>
-  connectionCheckIntervalRef: React.MutableRefObject<NodeJS.Timeout | null>
-  reconnectTimeoutRef: React.MutableRefObject<NodeJS.Timeout | null>
-  lastKeepAliveRef: React.MutableRefObject<number>
-  reconnectAttemptsRef: React.MutableRefObject<number>
 }
 
 export class WebRTCService {
@@ -32,17 +24,19 @@ export class WebRTCService {
   private incomingCallerId: string | null = null
 
   // Refs для управления состоянием
-  private refs: WebRTCRefs
+  private refs: PeerRefs
 
   private onStateChange?: (state: CallState) => void
   private onRemoteStream?: (stream: MediaStream) => void
   private onLocalStream?: (stream: MediaStream) => void
   private onError?: (error: string) => void
   private onRemoteMutedChange?: (muted: boolean) => void
+  private onRemoteVoiceActivityChange?: (active: boolean) => void
 
   // Звуки для звонков
   private ringtoneAudio: HTMLAudioElement | null = null
   private endCallAudio: HTMLAudioElement | null = null
+  private startAudio: HTMLAudioElement | null = null
   private isRingtonePlaying = false
 
   // Кэш каналов для отправки сигналов
@@ -54,7 +48,7 @@ export class WebRTCService {
   private lastActivityTime = Date.now()
   private isOnline = true
 
-  constructor(refs: WebRTCRefs) {
+  constructor(refs: PeerRefs) {
     this.refs = refs
     // Инициализация канала будет выполнена позже при первом использовании
     // Настраиваем обработчики завершения звонка
@@ -78,25 +72,38 @@ export class WebRTCService {
 
     this.currentUserId = user.id
 
-    // Создаем канал только для получения входящих сигналов
-    this.channel = this.supabase.channel(`webrtc:${this.currentUserId}`)
-
-    this.channel
-        .on('broadcast', { event: 'webrtc_signal' }, (payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) => {
-          logger.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Received signal from ${payload.payload.from.slice(0, 8)}:`, payload.payload.type)
-          this.handleIncomingSignal(payload)
-        })
-      .on('presence', { event: 'sync' }, () => {
-        logger.log(`👥 [User ${this.currentUserId.slice(0, 8)}] Channel presence synced`)
+    // Создаем устойчивый канал для получения входящих сигналов через ResilientChannelManager
+    try {
+      this.channel = await resilientChannelManager.createResilientChannel({
+        channelName: `webrtc:${this.currentUserId}`,
+        setup: (channel) => {
+          return channel
+            .on('broadcast', { event: 'webrtc_signal' }, (payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string } }) => {
+              logger.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Received signal from ${payload.payload.from.slice(0, 8)}:`, payload.payload.type)
+              this.handleIncomingSignal(payload)
+            })
+            .on('presence', { event: 'sync' }, () => {
+              logger.log(`👥 [User ${this.currentUserId.slice(0, 8)}] Channel presence synced`)
+            })
+        },
+        onSubscribed: () => {
+          logger.log(`✅ [User ${this.currentUserId.slice(0, 8)}] Successfully subscribed to resilient channel webrtc:${this.currentUserId}`)
+        },
+        onError: (error) => {
+          logger.error(`❌ [User ${this.currentUserId.slice(0, 8)}] Resilient channel error:`, error)
+        },
+        // Настройки для WebRTC каналов - более агрессивное переподключение
+        maxReconnectAttempts: 10,
+        reconnectDelay: 2000,
+        keepAliveInterval: 30000, // Каждые 30 секунд
+        healthCheckInterval: 60000 // Каждые минуту
       })
-      .subscribe((status) => {
-        logger.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Channel status:`, status)
-        if (status === 'SUBSCRIBED') {
-          logger.log(`✅ [User ${this.currentUserId.slice(0, 8)}] Successfully subscribed to channel webrtc:${this.currentUserId}`)
-        }
-      })
 
-    logger.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Signal channel initialized for receiving calls`)
+      logger.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Resilient signal channel initialized for receiving calls`)
+    } catch (error) {
+      logger.error(`💥 [User ${this.currentUserId.slice(0, 8)}] Failed to create resilient channel:`, error)
+      throw error
+    }
   }
 
   private async initializeSupabaseChannel() {
@@ -112,12 +119,14 @@ export class WebRTCService {
     onLocalStream?: (stream: MediaStream) => void
     onError?: (error: string) => void
     onRemoteMutedChange?: (muted: boolean) => void
+    onRemoteVoiceActivityChange?: (active: boolean) => void
   }) {
     this.onStateChange = callbacks.onStateChange
     this.onRemoteStream = callbacks.onRemoteStream
     this.onLocalStream = callbacks.onLocalStream
     this.onError = callbacks.onError
     this.onRemoteMutedChange = callbacks.onRemoteMutedChange
+    this.onRemoteVoiceActivityChange = callbacks.onRemoteVoiceActivityChange
   }
 
   // Установка ID собеседника
@@ -158,6 +167,33 @@ export class WebRTCService {
     }
   }
 
+  // Отправка статуса голосовой активности собеседнику
+  async sendVoiceActivityStatus(isActive: boolean) {
+    if (!this.peerUserId || !this.currentUserId) {
+      // Тихая отправка - не логируем если нет peer
+      return
+    }
+
+    try {
+      await this.sendSignal({
+        type: 'voice_activity',
+        from: this.currentUserId,
+        to: this.peerUserId,
+        active: isActive
+      })
+
+      // Логируем только изменения состояния (не каждые 100ms)
+      if (Math.random() < 0.01) { // 1% от отправок
+        logger.log(`🗣️ [User ${this.currentUserId.slice(0, 8)}] Sent voice activity to ${this.peerUserId.slice(0, 8)}: ${isActive ? 'speaking' : 'quiet'}`)
+      }
+    } catch (error) {
+      // Тихая ошибка - не прерываем работу
+      if (Math.random() < 0.001) { // 0.1% от ошибок
+        logger.warn('Voice activity signal failed (suppressed):', error)
+      }
+    }
+  }
+
   // Инициализация звуков для звонков
   async initializeSounds() {
     try {
@@ -180,6 +216,16 @@ export class WebRTCService {
       if (endCallData?.publicUrl) {
         this.endCallAudio = new Audio(endCallData.publicUrl)
         this.endCallAudio.volume = 0.7
+      }
+
+      // Загружаем звук начала звонка
+      const { data: startData } = await this.supabase.storage
+        .from('sounds')
+        .getPublicUrl('start.mp3')
+
+      if (startData?.publicUrl) {
+        this.startAudio = new Audio(startData.publicUrl)
+        this.startAudio.volume = 0.8
       }
 
       logger.log('🔊 Sounds initialized successfully')
@@ -215,6 +261,16 @@ export class WebRTCService {
       this.endCallAudio.currentTime = 0
       this.endCallAudio.play().catch(err => {
         logger.error('❌ Error playing end call sound:', err)
+      })
+    }
+  }
+
+  // Воспроизведение звука начала звонка
+  playStartSound() {
+    if (this.startAudio) {
+      this.startAudio.currentTime = 0
+      this.startAudio.play().catch(err => {
+        logger.error('❌ Error playing start sound:', err)
       })
     }
   }
@@ -296,22 +352,15 @@ export class WebRTCService {
     // Проигрываем звук окончания звонка
     this.playEndCallSound()
 
-    // Отправляем сигнал завершения через Supabase канал
+    // Отправляем сигнал завершения через resilient канал
     if (this.targetUserId) {
       try {
-        const supabase = createClient()
-        const targetChannel = supabase.channel(`webrtc:${this.targetUserId}`)
-        await targetChannel.subscribe()
-
-        await targetChannel.send({
-          type: 'broadcast',
-          event: 'webrtc_signal',
-          payload: {
-            type: 'end-call',
-            from: this.currentUserId
-          }
+        await this.sendSignal({
+          type: 'end-call',
+          from: this.currentUserId,
+          to: this.targetUserId
         })
-        logger.log('End call signal sent')
+        logger.log('End call signal sent via resilient channel')
       } catch (err) {
         logger.error('Error sending end call signal:', err)
       }
@@ -407,6 +456,9 @@ export class WebRTCService {
         this.isCallActive = true
         this.onStateChange?.('connected')
 
+        // Проигрываем звук начала звонка
+        this.playStartSound()
+
         // Сбрасываем счетчик переподключений
         this.refs.reconnectAttemptsRef.current = 0
 
@@ -431,24 +483,29 @@ export class WebRTCService {
         this.onRemoteStream?.(remoteStream)
       })
 
-      // Обработчик ошибок
+      // Обработчик ошибок с улучшенной логикой
       this.peer.on('error', (err: Error) => {
-        // Игнорируем ошибку User-Initiated Abort, так как это нормальное завершение звонка
-        if (err.message.includes('User-Initiated Abort')) {
-          logger.log('Peer connection closed by user')
-          return
-        }
-
-        logger.error('Peer error:', err)
-        this.onError?.(`Ошибка соединения: ${err.message}`)
-        this.cleanup()
-        this.onStateChange?.('idle')
+        handlePeerError(
+          err,
+          this.refs,
+          this.currentUserId,
+          this.targetUserId,
+          this.isCallActive,
+          async (isInitiator: boolean) => {
+            // Переинициализация peer соединения
+            await this.initializePeer(isInitiator)
+          }
+        )
       })
 
-      // Обработчик закрытия
+      // Обработчик закрытия с улучшенной логикой
       this.peer.on('close', () => {
-        logger.log('Peer connection closed')
-        this.cleanup()
+        handlePeerClose(
+          this.refs,
+          this.currentUserId,
+          () => this.stopKeepAlive(),
+          () => this.stopConnectionMonitoring()
+        )
         this.onStateChange?.('idle')
       })
 
@@ -489,6 +546,9 @@ export class WebRTCService {
   private cleanup() {
     // Останавливаем все звуки
     this.stopRingtone()
+
+    // Сбрасываем счетчики переподключения
+    resetReconnectionCounter(this.refs)
 
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => {
@@ -674,12 +734,19 @@ export class WebRTCService {
         if (this.peer) {
           const pc = (this.peer as SimplePeerWithPC)._pc
           if (pc && pc.connectionState === 'failed') {
-            logger.log('📞 Peer connection failed - ending call')
-            // Добавляем небольшую задержку перед завершением звонка
-            setTimeout(() => {
-              this.endCall()
-              this.onError?.('Соединение прервано. Попробуйте позвонить еще раз.')
-            }, 1000)
+            logger.log('📞 Peer connection failed - attempting reconnection')
+
+            // Попытка переподключения вместо завершения звонка
+            attemptReconnection(
+              this.refs,
+              this.currentUserId,
+              this.isCallActive,
+              this.targetUserId,
+              async (isInitiator: boolean) => {
+                // Переинициализация peer соединения
+                await this.initializePeer(isInitiator)
+              }
+            )
           }
         }
       }
@@ -741,7 +808,7 @@ export class WebRTCService {
     logger.log('✅ WebRTC state force reset completed')
   }
 
-  private handleIncomingSignal(payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string, muted?: boolean } }) {
+  private handleIncomingSignal(payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string, muted?: boolean, active?: boolean } }) {
     const { type, signal, from, muted } = payload.payload
 
     logger.log('📡 Received WebRTC signal:', payload)
@@ -781,6 +848,15 @@ export class WebRTCService {
       console.log(`🎤 🔴 RECEIVED MUTE STATUS: from=${from.slice(0, 8)}, muted=${muted}, type=${typeof muted}`)
       logger.log(`🎤 [User ${this.currentUserId.slice(0, 8)}] Received mute status from ${from.slice(0, 8)}: ${muted ? 'muted' : 'unmuted'}`)
       this.onRemoteMutedChange?.(muted!)
+      return
+    }
+
+    // Обработка voice_activity сигнала
+    if (type === 'voice_activity') {
+      const active = payload.payload.active as boolean
+      console.log(`🎤 🗣️ RECEIVED VOICE ACTIVITY: from=${from.slice(0, 8)}, active=${active}`)
+      logger.log(`🎤 [User ${this.currentUserId.slice(0, 8)}] Received voice activity from ${from.slice(0, 8)}: ${active ? 'speaking' : 'quiet'}`)
+      this.onRemoteVoiceActivityChange?.(active!)
       return
     }
 
@@ -905,7 +981,7 @@ export class WebRTCService {
     return this.localStream
   }
 
-  async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData, muted?: boolean }) {
+  async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData, muted?: boolean, active?: boolean }) {
     console.log(`📤 🔵 SENDING SIGNAL:`, data)
     try {
       if (this.peer?.destroyed) {
@@ -917,15 +993,21 @@ export class WebRTCService {
 
       // Пробуем разные способы отправки сигналов
 
-      // Способ 1: Через realtime канал с явным httpSend
+      // Способ 1: Через кэшированный realtime канал
       try {
-        const supabase = createClient()
-        const targetChannel = supabase.channel(`webrtc:${data.to}`)
+        let targetChannel = this.sendChannels.get(data.to)
 
-        // Подписываемся на канал
-        await targetChannel.subscribe()
+        if (!targetChannel) {
+          const supabase = createClient()
+          targetChannel = supabase.channel(`webrtc:${data.to}`)
+          this.sendChannels.set(data.to, targetChannel)
 
-        // Отправляем сигнал
+          // Подписываемся на канал только если он новый
+          await targetChannel.subscribe()
+          logger.log(`📡 Subscribed to send channel for ${data.to.slice(0, 8)}`)
+        }
+
+        // Отправляем сигнал через кэшированный канал
         await targetChannel.send({
           type: 'broadcast',
           event: 'webrtc_signal',
@@ -937,7 +1019,7 @@ export class WebRTCService {
           }
         })
 
-        logger.log('✅ Signal sent via realtime channel')
+        logger.log('✅ Signal sent via cached realtime channel')
       } catch (realtimeError) {
         logger.warn('Realtime send failed, trying HTTP fallback:', realtimeError)
 

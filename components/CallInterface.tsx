@@ -17,6 +17,7 @@ interface CallInterfaceProps {
   voiceActivity: { local: boolean, remote: boolean }
   isMuted: boolean
   remoteMuted?: boolean // Статус микрофона собеседника
+  remoteVoiceActivity?: boolean // Голосовая активность собеседника
   onAcceptCall: () => void
   onRejectCall: () => void
   onEndCall: () => void
@@ -33,12 +34,14 @@ export default function CallInterface({
   voiceActivity,
   isMuted,
   remoteMuted = false,
+  remoteVoiceActivity = false,
   onAcceptCall,
   onRejectCall,
   onEndCall,
   onToggleMute
 }: CallInterfaceProps) {
   const [callDuration, setCallDuration] = useState(0)
+  const [showRealContent, setShowRealContent] = useState(false)
   const callStartTime = useRef<number | null>(null)
 
   const callerUser = users.find(u => u.id === incomingCallerId)
@@ -77,6 +80,18 @@ export default function CallInterface({
       }
     }
   }, [callState])
+
+  // Управление появлением профиля с задержкой
+  useEffect(() => {
+    if (currentUser) {
+      const timer = setTimeout(() => {
+        setShowRealContent(true)
+      }, 1000) // 1 секунда задержки после загрузки данных
+      return () => clearTimeout(timer)
+    } else {
+      setShowRealContent(false)
+    }
+  }, [currentUser])
 
   // Форматирование времени
   const formatDuration = (seconds: number) => {
@@ -128,36 +143,46 @@ export default function CallInterface({
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 relative z-10">
           {/* Левая сторона - пользователь */}
-          <div className="flex flex-col items-center gap-1 sm:gap-2 relative w-24">
-              <div className={`w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 ${
-                callState === 'connected' && voiceActivity.local ? 'ring-4 ring-[#C3073F] animate-pulse' : ''
-              }`}>
-                {currentUser?.avatar_url ? (
-                  <Image
-                    src={currentUser.avatar_url}
-                    alt="Your avatar"
-                    width={40}
-                    height={40}
-                    className="w-full h-full object-cover rounded-full"
-                  />
-                ) : (
-                  <span className="text-sm sm:text-lg text-white">
-                    {currentUser?.display_name?.charAt(0).toUpperCase() || currentUser?.email?.charAt(0).toUpperCase()}
-                  </span>
-                )}
-              </div>
-              {/* Индикатор выключенного микрофона - абсолютное позиционирование */}
-              {callState === 'connected' && isMuted && (
-                <div className="absolute bottom-0 right-0 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
-                  <FiMicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+          {currentUser && showRealContent ? (
+            <div className="flex flex-col items-center gap-1 sm:gap-2 relative w-24">
+                {/* Аватар - появляется первым */}
+                <div className={`w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 animate-fadeInAvatar ${
+                  callState === 'connected' && voiceActivity.local ? 'ring-4 ring-[#C3073F] animate-pulse' : ''
+                }`}>
+                  {currentUser?.avatar_url ? (
+                    <Image
+                      src={currentUser.avatar_url}
+                      alt="Your avatar"
+                      width={40}
+                      height={40}
+                      className="w-full h-full object-cover rounded-full"
+                    />
+                  ) : (
+                    <span className="text-sm sm:text-lg text-white">
+                      {currentUser?.display_name?.charAt(0).toUpperCase() || currentUser?.email?.charAt(0).toUpperCase()}
+                    </span>
+                  )}
                 </div>
-              )}
-            <div className="text-center">
-              <p className="font-medium text-xs sm:text-sm">
-                {currentUser?.display_name || currentUser?.email?.split('@')[0] || 'Вы'}
-              </p>
+                {/* Индикатор выключенного микрофона - абсолютное позиционирование */}
+                {callState === 'connected' && isMuted && (
+                  <div className="absolute bottom-0 right-0 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
+                    <FiMicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                  </div>
+                )}
+              {/* Текст - появляется с задержкой */}
+              <div className="text-center animate-fadeInText">
+                <p className="font-medium text-xs sm:text-sm">
+                  {currentUser?.display_name || currentUser?.email?.split('@')[0] || 'Вы'}
+                </p>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Skeleton загрузка */
+            <div className="flex flex-col items-center gap-1 sm:gap-2 relative w-24">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gray-300 rounded-full animate-pulse"></div>
+              <div className="w-8 h-3 bg-gray-300 rounded animate-pulse"></div>
+            </div>
+          )}
 
           {/* Волны + Центральная иконка */}
           <div className="flex-1 flex items-center justify-center relative z-10">
@@ -310,7 +335,7 @@ export default function CallInterface({
           {/* Правая сторона - собеседник */}
           <div className="flex flex-col items-center gap-1 sm:gap-2 relative w-24">
             <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center overflow-hidden transition-all duration-300 ${
-              callState === 'connected' ? (voiceActivity.local || (voiceActivity.remote && !remoteMuted) ? 'ring-4 ring-[#C3073F] animate-pulse' : 'ring-2 ring-[#6F2232]') :
+              callState === 'connected' ? (remoteVoiceActivity && !remoteMuted ? 'ring-4 ring-[#C3073F] animate-pulse' : 'ring-2 ring-[#6F2232]') :
               callState === 'receiving' ? 'ring-2 ring-[#C3073F] animate-pulse' : ''
             }`}>
               {callState === 'idle' && (
@@ -332,7 +357,7 @@ export default function CallInterface({
                 ) : (
                   <div className="w-full h-full bg-gradient-to-br from-[#C3073F] to-[#950740] rounded-full flex items-center justify-center">
                     <span className="text-white text-lg">
-                      {(callerUser?.display_name || 'З').charAt(0).toUpperCase()}
+                      {(callerUser?.display_name || callerUser?.email || '?').charAt(0).toUpperCase()}
                     </span>
                   </div>
                 )
@@ -349,7 +374,7 @@ export default function CallInterface({
                 ) : (
                   <div className="w-full h-full bg-gray-400 rounded-full flex items-center justify-center">
                     <span className="text-white text-lg">
-                      {(currentPeerUser?.display_name || 'С').charAt(0).toUpperCase()}
+                      {(currentPeerUser?.display_name || currentPeerUser?.email || '?').charAt(0).toUpperCase()}
                     </span>
                   </div>
                 )
@@ -366,7 +391,7 @@ export default function CallInterface({
                 ) : (
                   <div className="w-full h-full bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center">
                     <span className="text-white text-lg">
-                      {(currentPeerUser?.display_name || 'С').charAt(0).toUpperCase()}
+                      {(currentPeerUser?.display_name || currentPeerUser?.email || '?').charAt(0).toUpperCase()}
                     </span>
                   </div>
                 )
@@ -381,9 +406,9 @@ export default function CallInterface({
             <div className="text-center">
               <p className="font-medium text-xs sm:text-sm">
                 {callState === 'idle' && 'Ожидание'}
-                {callState === 'calling' && (currentPeerUser?.display_name || 'Звонок...')}
+                {callState === 'calling' && (currentPeerUser?.display_name || currentPeerUser?.email?.split('@')[0] || 'Исходящий звонок')}
                 {callState === 'receiving' && (currentPeerUser?.display_name || 'Входящий')}
-                {callState === 'connected' && (currentPeerUser?.display_name || currentPeerUser?.email?.split('@')[0] || 'Unknown')}
+                {callState === 'connected' && (currentPeerUser?.display_name || currentPeerUser?.email?.split('@')[0] || (peerUserId ? peerUserId.slice(0, 8) + '...' : 'Собеседник'))}
               </p>
             </div>
           </div>
