@@ -70,6 +70,9 @@ export default function Header({ currentUser, loadingProfile = false, onOpenSett
                     width={32}
                     height={32}
                     className="w-full h-full object-cover"
+                    priority
+                    placeholder="blur"
+                    blurDataURL="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTYiIGZpbGw9IiM0RTFFNTAiLz4KPHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSI2IiB5PSI2Ij4KPGNpcmNsZSBjeD0iNiIgY3k9IjUiIHI9IjEiIGZpbGw9IiM2RjIyMzIiLz4KPHBhdGggZD0iTTYgOWM0IDAgOC0yIDgtN3MtNC03LTgtN3oiIGZpbGw9IiM2RjIyMzIiLz4KPC9zdmc+Cjwvc3ZnPgo8L3N2Zz4K"
                   />
                 ) : (
                   <span className="text-sm sm:text-base md:text-lg text-white font-semibold">

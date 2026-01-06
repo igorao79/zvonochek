@@ -217,3 +217,4 @@ export const handlePeerClose = (
   // Не вызываем endCall() здесь, чтобы избежать рекурсии
   // endCall() будет вызван через обработчик события в CallInterface
 }
+

@@ -885,6 +885,7 @@ export default function AudioCallPage() {
         callState={callState}
         currentUser={currentUser}
         users={users}
+        allUsers={allUsers}
         targetUserId={targetUserId}
         incomingCallerId={incomingCallerId}
         currentPeerId={currentPeerId}

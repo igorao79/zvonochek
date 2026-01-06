@@ -110,6 +110,9 @@ export default function SettingsModal({
                       width={64}
                       height={64}
                       className="w-full h-full object-cover"
+                      priority
+                      placeholder="blur"
+                      blurDataURL="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzIiIGZpbGw9IiM0RTFFNTAiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSIyMCIgeT0iMjAiPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEwIiByPSIyIiBmaWxsPSIjNkYyMjMyIi8+CjxwYXRoIGQ9Ik0xMiAxNWM0IDAgOC0yIDgtN3MtNC03LTgtN3oiIGZpbGw9IiM2RjIyMzIi8+Cjwvc3ZnPgo8L3N2Zz4K"
                     />
                   ) : (
                     <span className="text-xl text-white">

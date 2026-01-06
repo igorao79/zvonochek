@@ -11,6 +11,7 @@ interface CallInterfaceProps {
   callState: CallState
   currentUser: User | null
   users: User[]
+  allUsers: User[] // Все пользователи включая контакты
   targetUserId: string
   incomingCallerId: string | null
   currentPeerId?: string | null // ID текущего собеседника
@@ -28,6 +29,7 @@ export default function CallInterface({
   callState,
   currentUser,
   users,
+  allUsers,
   targetUserId,
   incomingCallerId,
   currentPeerId,
@@ -44,12 +46,12 @@ export default function CallInterface({
   const [showRealContent, setShowRealContent] = useState(false)
   const callStartTime = useRef<number | null>(null)
 
-  const callerUser = users.find(u => u.id === incomingCallerId)
+  const callerUser = allUsers.find(u => u.id === incomingCallerId)
 
   // Определяем ID текущего собеседника
   // Приоритет: currentPeerId (сохраненный), затем targetUserId, затем incomingCallerId
   const peerUserId = currentPeerId || targetUserId || incomingCallerId
-  const currentPeerUser = users.find(u => u.id === peerUserId)
+  const currentPeerUser = allUsers.find(u => u.id === peerUserId)
 
 
   // Таймер звонка
@@ -156,6 +158,7 @@ export default function CallInterface({
                       width={40}
                       height={40}
                       className="w-full h-full object-cover rounded-full"
+                      priority
                     />
                   ) : (
                     <span className="text-sm sm:text-lg text-white">
@@ -353,6 +356,7 @@ export default function CallInterface({
                     width={48}
                     height={48}
                     className="w-full h-full object-cover rounded-full"
+                    priority
                   />
                 ) : (
                   <div className="w-full h-full bg-gradient-to-br from-[#C3073F] to-[#950740] rounded-full flex items-center justify-center">
@@ -370,6 +374,7 @@ export default function CallInterface({
                     width={48}
                     height={48}
                     className="w-full h-full object-cover rounded-full grayscale opacity-60"
+                    priority
                   />
                 ) : (
                   <div className="w-full h-full bg-gray-400 rounded-full flex items-center justify-center">
@@ -387,6 +392,7 @@ export default function CallInterface({
                     width={48}
                     height={48}
                     className="w-full h-full object-cover rounded-full"
+                    priority
                   />
                 ) : (
                   <div className="w-full h-full bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center">
