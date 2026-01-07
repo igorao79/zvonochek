@@ -374,8 +374,8 @@ export default function AudioCallPage() {
     // Обновляем статус сразу при загрузке
     updateOnlineStatus()
 
-    // И затем каждые 30 секунд
-    const interval = setInterval(updateOnlineStatus, 30 * 1000) // 30 секунд
+    // И затем каждые 5 минут
+    const interval = setInterval(updateOnlineStatus, 5 * 60 * 1000) // 5 минут
 
     // Также обновляем при активности пользователя
     let activityTimeout: NodeJS.Timeout
@@ -384,7 +384,7 @@ export default function AudioCallPage() {
       clearTimeout(activityTimeout)
       activityTimeout = setTimeout(() => {
         updateOnlineStatus()
-      }, 5000) // Обновляем через 5 секунд после последней активности
+      }, 30000) // Обновляем через 30 секунд после последней активности
     }
 
     // Слушаем события активности
@@ -472,12 +472,12 @@ export default function AudioCallPage() {
         }
       })
 
-    // Также обновляем статусы каждые 30 секунд для надежности
+    // Также обновляем статусы каждые 10 минут для надежности
     const usersUpdateInterval = setInterval(() => {
       if (!isLoadingUsers && currentUser) {
         loadUsers()
       }
-    }, 30 * 1000)
+    }, 10 * 60 * 1000) // 10 минут
 
     return () => {
       clearInterval(usersUpdateInterval)
@@ -497,13 +497,17 @@ export default function AudioCallPage() {
     let remoteAnalyser: AnalyserNode | null = null
     let localSource: MediaStreamAudioSourceNode | null = null
     let remoteSource: MediaStreamAudioSourceNode | null = null
-    let animationFrame: number
+    let voiceInterval: NodeJS.Timeout | null = null
     let lastSentLocalActivity = false
-    let lastSentTime = 0
-    const SEND_INTERVAL = 2000 // Отправляем сигнал не чаще чем раз в 2 секунды
+    let signalCount = 0
+    let frameCount = 0
+    let voiceDebounceTimeout: NodeJS.Timeout | null = null
+    const VOICE_DEBOUNCE_MS = 1000 // Не отправлять сигналы чаще чем раз в секунду
 
     const initVoiceDetection = async () => {
       try {
+        console.log('🎤 INITIALIZING VOICE DETECTION')
+
         // Local voice detection (microphone input)
         const localStream = webrtcServiceRef.current?.getLocalStream()
         if (localStream) {
@@ -512,6 +516,7 @@ export default function AudioCallPage() {
           localAnalyser.fftSize = 256
           localAnalyser.smoothingTimeConstant = 0.3
           localSource.connect(localAnalyser)
+          console.log('🎤 Local analyser set up')
         }
 
         // Remote voice detection (incoming audio)
@@ -521,18 +526,21 @@ export default function AudioCallPage() {
           remoteAnalyser.fftSize = 256
           remoteAnalyser.smoothingTimeConstant = 0.3
           remoteSource.connect(remoteAnalyser)
+          console.log('🎤 Remote analyser set up')
         }
 
-        const detectVoice = () => {
+        // Используем setInterval вместо requestAnimationFrame для снижения частоты
+        voiceInterval = setInterval(() => {
+          frameCount++
+
           const newVoiceActivity = { local: false, remote: false }
-          const now = Date.now()
 
           // Check local voice
           if (localAnalyser) {
             const localDataArray = new Uint8Array(localAnalyser.frequencyBinCount)
             localAnalyser.getByteFrequencyData(localDataArray)
             const localAverage = localDataArray.reduce((a: number, b: number) => a + b) / localAnalyser.frequencyBinCount
-            newVoiceActivity.local = localAverage > 15 // Lower threshold for voice detection
+            newVoiceActivity.local = localAverage > 30 // Higher threshold for voice detection
           }
 
           // Check remote voice
@@ -540,34 +548,39 @@ export default function AudioCallPage() {
             const remoteDataArray = new Uint8Array(remoteAnalyser.frequencyBinCount)
             remoteAnalyser.getByteFrequencyData(remoteDataArray)
             const remoteAverage = remoteDataArray.reduce((a: number, b: number) => a + b) / remoteAnalyser.frequencyBinCount
-            newVoiceActivity.remote = remoteAverage > 15 // Lower threshold for voice detection
+            newVoiceActivity.remote = remoteAverage > 30 // Higher threshold for voice detection
           }
 
-          // Обновляем локальное состояние без задержек
+          // Обновляем локальное состояние
           setVoiceActivity({ local: newVoiceActivity.local, remote: remoteVoiceActivity })
 
-          // Отправляем статус голосовой активности только если:
-          // 1. Изменилось состояние активности
-          // 2. Прошло достаточно времени с момента последней отправки
+          // Отправляем статус голосовой активности ТОЛЬКО при изменении состояния с debounce
           if (webrtcServiceRef.current && callState === 'connected' &&
-              (newVoiceActivity.local !== lastSentLocalActivity || now - lastSentTime > SEND_INTERVAL)) {
-            webrtcServiceRef.current.sendVoiceActivityStatus(newVoiceActivity.local)
-            lastSentLocalActivity = newVoiceActivity.local
-            lastSentTime = now
+              newVoiceActivity.local !== lastSentLocalActivity && !voiceDebounceTimeout) {
 
-            // Логируем только изменения состояния
-            if (newVoiceActivity.local !== voiceActivity.local) {
+            // Устанавливаем debounce timeout
+            voiceDebounceTimeout = setTimeout(() => {
+              signalCount++
+              console.log(`🎤 [${signalCount}] VOICE ACTIVITY CHANGE: ${lastSentLocalActivity} -> ${newVoiceActivity.local}`)
+              webrtcServiceRef.current?.sendVoiceActivityStatus(newVoiceActivity.local)
+              lastSentLocalActivity = newVoiceActivity.local
+              voiceDebounceTimeout = null
+
+              // Логируем изменение состояния
               logger.log('Voice activity changed:', {
                 local: newVoiceActivity.local ? 'ACTIVE' : 'quiet',
                 level: localAnalyser ? (new Uint8Array(localAnalyser.frequencyBinCount).reduce((a: number, b: number) => a + b) / localAnalyser.frequencyBinCount) : 0
               })
-            }
+            }, VOICE_DEBOUNCE_MS)
           }
 
-          animationFrame = requestAnimationFrame(detectVoice)
-        }
+          // Логируем каждые 100 проверок для отладки
+          if (frameCount % 100 === 0) {
+            console.log(`🎤 Check ${frameCount}: local=${newVoiceActivity.local}, remote=${newVoiceActivity.remote}, signals=${signalCount}`)
+          }
+        }, 100) // Проверяем каждые 100ms вместо 60fps
 
-        detectVoice()
+        console.log('🎤 Voice detection interval started')
       } catch (error) {
         logger.warn('Voice detection initialization failed:', error)
       }
@@ -576,8 +589,12 @@ export default function AudioCallPage() {
     initVoiceDetection()
 
     return () => {
-      if (animationFrame) {
-        cancelAnimationFrame(animationFrame)
+      console.log(`🎤 CLEANING UP VOICE DETECTION (frames: ${frameCount}, signals: ${signalCount})`)
+      if (voiceInterval) {
+        clearInterval(voiceInterval)
+      }
+      if (voiceDebounceTimeout) {
+        clearTimeout(voiceDebounceTimeout)
       }
       if (localSource) {
         localSource.disconnect()
@@ -589,7 +606,7 @@ export default function AudioCallPage() {
         audioContext.close()
       }
     }
-  }, [callState, voiceActivity.local]) // Добавили зависимость от voiceActivity.local
+  }, [callState]) // Убираем зависимость от voiceActivity.local чтобы избежать перезапусков
 
   const handleStartCall = async (userId: string) => {
     if (!userId.trim()) {
