@@ -15,6 +15,8 @@ export class WebRTCService {
   private peer: SimplePeer.Instance | null = null
   private localStream: MediaStream | null = null
   private remoteStream: MediaStream | null = null
+  private localScreenStream: MediaStream | null = null
+  private remoteScreenStream: MediaStream | null = null
   private supabase = createClient()
   private channel: RealtimeChannel | null = null
   private currentUserId: string = ''
@@ -22,6 +24,8 @@ export class WebRTCService {
   private peerUserId: string | null = null
   private isCallActive = false
   private incomingCallerId: string | null = null
+  private isRenegotiating = false // Флаг для отслеживания renegotiation процесса
+  private ignoreOffersUntil = 0 // Время до которого игнорируем offer'ы (для защиты от ложных звонков)
 
   // Refs для управления состоянием
   private refs: PeerRefs
@@ -32,6 +36,7 @@ export class WebRTCService {
   private onError?: (error: string) => void
   private onRemoteMutedChange?: (muted: boolean) => void
   private onRemoteVoiceActivityChange?: (active: boolean) => void
+  private onRemoteScreenStream?: (stream: MediaStream | null) => void
 
   // Звуки для звонков
   private ringtoneAudio: HTMLAudioElement | null = null
@@ -120,6 +125,7 @@ export class WebRTCService {
     onError?: (error: string) => void
     onRemoteMutedChange?: (muted: boolean) => void
     onRemoteVoiceActivityChange?: (active: boolean) => void
+    onRemoteScreenStream?: (stream: MediaStream | null) => void
   }) {
     this.onStateChange = callbacks.onStateChange
     this.onRemoteStream = callbacks.onRemoteStream
@@ -127,6 +133,7 @@ export class WebRTCService {
     this.onError = callbacks.onError
     this.onRemoteMutedChange = callbacks.onRemoteMutedChange
     this.onRemoteVoiceActivityChange = callbacks.onRemoteVoiceActivityChange
+    this.onRemoteScreenStream = callbacks.onRemoteScreenStream
   }
 
   // Установка ID собеседника
@@ -191,6 +198,161 @@ export class WebRTCService {
       if (Math.random() < 0.001) { // 0.1% от ошибок
         logger.warn('Voice activity signal failed (suppressed):', error)
       }
+    }
+  }
+
+  // Отправка статуса демонстрации экрана собеседнику
+  async sendScreenShareStatus(isSharing: boolean) {
+    if (!this.peerUserId || !this.currentUserId) {
+      logger.log('Cannot send screen share status: no peer user ID')
+      return
+    }
+
+    try {
+      await this.sendSignal({
+        type: 'screen_share',
+        from: this.currentUserId,
+        to: this.peerUserId,
+        sharing: isSharing
+      })
+      logger.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Sent screen share status to ${this.peerUserId.slice(0, 8)}: ${isSharing ? 'sharing' : 'stopped'}`)
+    } catch (error) {
+      logger.error('Error sending screen share status:', error)
+    }
+  }
+
+  // Начало демонстрации экрана
+  async startScreenShare() {
+    if (!this.peer || this.peer.destroyed) {
+      logger.log('Cannot start screen share: no active peer connection')
+      return false
+    }
+
+    try {
+      logger.log('Requesting screen share access...')
+
+      // Запрашиваем доступ к экрану
+      this.localScreenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 }
+        },
+        audio: false // Аудио экрана не передаем, чтобы избежать эха
+      })
+
+      logger.log('Screen share access granted, adding to peer...')
+
+      // Устанавливаем флаг renegotiation
+      this.isRenegotiating = true
+
+      // Добавляем видео трек из screen стрима
+      const videoTrack = this.localScreenStream.getVideoTracks()[0]
+      if (videoTrack) {
+        // Проверяем, есть ли уже видео трек в peer соединении
+        const existingVideoTracks = this.localStream?.getVideoTracks() || []
+
+        if (existingVideoTracks.length > 0) {
+          // Заменяем существующий видео трек
+          this.peer.replaceTrack(existingVideoTracks[0], videoTrack, this.localStream!)
+          // Удаляем старый трек из локального стрима
+          this.localStream!.removeTrack(existingVideoTracks[0])
+        } else {
+          // Добавляем новый видео трек
+          this.peer.addTrack(videoTrack, this.localStream || new MediaStream())
+        }
+
+        // Добавляем новый трек в локальный стрим
+        if (this.localStream) {
+          this.localStream.addTrack(videoTrack)
+        }
+
+        // Отправляем специальный сигнал о начале renegotiation
+        if (this.peerUserId) {
+          this.sendSignal({
+            type: 'renegotiate_start',
+            from: this.currentUserId,
+            to: this.peerUserId
+          })
+          logger.log('📤 Sent renegotiate_start signal')
+        }
+
+        // Обрабатываем окончание демонстрации (когда пользователь нажимает "Stop sharing")
+        videoTrack.onended = () => {
+          logger.log('Screen sharing ended by user')
+          this.stopScreenShare()
+        }
+
+        // Отправляем статус screen_share сразу
+        this.sendScreenShareStatus(true)
+        logger.log('📺 Screen share status sent to peer')
+
+        // Отправляем сигнал о завершении renegotiation через короткую задержку
+        setTimeout(() => {
+          if (this.peerUserId) {
+            this.sendSignal({
+              type: 'renegotiate_end',
+              from: this.currentUserId,
+              to: this.peerUserId
+            })
+            logger.log('🔄 Renegotiation end signal sent')
+          }
+        }, 1000)
+
+        logger.log('Screen share started successfully')
+        return true
+      } else {
+        logger.error('No video track found in screen stream')
+        this.stopScreenShare()
+        return false
+      }
+    } catch (error) {
+      logger.error('Error starting screen share:', error)
+
+      if (error instanceof Error) {
+        if (error.name === 'NotAllowedError') {
+          this.onError?.('Доступ к демонстрации экрана запрещен. Разрешите доступ в настройках браузера.')
+        } else if (error.name === 'NotFoundError') {
+          this.onError?.('Экран не найден для демонстрации.')
+        } else {
+          this.onError?.(`Ошибка демонстрации экрана: ${error.message}`)
+        }
+      } else {
+        this.onError?.('Неизвестная ошибка при демонстрации экрана')
+      }
+
+      this.stopScreenShare()
+      return false
+    }
+  }
+
+  // Остановка демонстрации экрана
+  stopScreenShare() {
+    if (this.localScreenStream) {
+      logger.log('Stopping screen share...')
+
+      // Останавливаем видео треки screen стрима
+      this.localScreenStream.getTracks().forEach(track => {
+        track.stop()
+        logger.log('Stopped screen track:', track.kind, track.label)
+      })
+
+      this.localScreenStream = null
+
+      // Сбрасываем флаг renegotiation
+      this.isRenegotiating = false
+
+      // Устанавливаем период игнорирования offer'ов (5 секунд после остановки стрима)
+      this.ignoreOffersUntil = Date.now() + 5000
+      logger.log('🛡️ Ignoring offers for 5 seconds after screen share stop')
+
+      // Отправляем статус собеседнику
+      this.sendScreenShareStatus(false)
+
+      // Примечание: НЕ удаляем видео трек из peer соединения,
+      // чтобы избежать renegotiation и ложных звонков у собеседника
+
+      logger.log('Screen share stopped')
     }
   }
 
@@ -479,9 +641,90 @@ export class WebRTCService {
           }))
         })
 
+        // Сохраняем полный remote stream
         this.remoteStream = remoteStream
         this.onRemoteStream?.(remoteStream)
+
+        // Проверяем и обрабатываем треки
+        processRemoteTracks(remoteStream)
+
+        // Добавляем обработчик изменения треков в stream'е
+        remoteStream.onaddtrack = (event) => {
+          logger.log('Track added to remote stream:', {
+            kind: event.track.kind,
+            label: event.track.label,
+            id: event.track.id
+          })
+
+          // Если добавлен видео трек, обрабатываем как screen sharing
+          if (event.track.kind === 'video') {
+            const screenStream = new MediaStream([event.track])
+            this.remoteScreenStream = screenStream
+            this.onRemoteScreenStream?.(screenStream)
+            logger.log('Screen sharing started via onaddtrack')
+          }
+        }
+
+        remoteStream.onremovetrack = (event) => {
+          logger.log('Track removed from remote stream:', {
+            kind: event.track.kind,
+            label: event.track.label,
+            id: event.track.id
+          })
+
+          // Если удален видео трек, останавливаем screen sharing
+          if (event.track.kind === 'video') {
+            this.remoteScreenStream = null
+            this.onRemoteScreenStream?.(null)
+            logger.log('Screen sharing stopped via onremovetrack')
+          }
+        }
       })
+
+      // Обработчик новых треков (для динамического добавления видео)
+      this.peer.on('track', (track: MediaStreamTrack, stream: MediaStream) => {
+        logger.log('Received new track:', {
+          kind: track.kind,
+          label: track.label,
+          id: track.id,
+          enabled: track.enabled,
+          readyState: track.readyState
+        })
+
+        // Если это видео трек, обрабатываем как screen sharing
+        if (track.kind === 'video') {
+          const screenStream = new MediaStream([track])
+          this.remoteScreenStream = screenStream
+          this.onRemoteScreenStream?.(screenStream)
+          logger.log('Processed screen sharing track')
+        }
+      })
+
+      // Функция для обработки треков remote stream
+      const processRemoteTracks = (stream: MediaStream) => {
+        const audioTracks = stream.getAudioTracks()
+        const videoTracks = stream.getVideoTracks()
+
+        logger.log('Processing remote tracks:', {
+          audio: audioTracks.length,
+          video: videoTracks.length
+        })
+
+        // Обрабатываем видео треки (демонстрация экрана)
+        if (videoTracks.length > 0) {
+          const screenStream = new MediaStream(videoTracks)
+          this.remoteScreenStream = screenStream
+          this.onRemoteScreenStream?.(screenStream)
+          logger.log('Screen sharing active with', videoTracks.length, 'video tracks')
+        } else {
+          // Если видео треков нет, очищаем screen stream
+          if (this.remoteScreenStream) {
+            this.remoteScreenStream = null
+            this.onRemoteScreenStream?.(null)
+            logger.log('Screen sharing stopped')
+          }
+        }
+      }
 
       // Обработчик ошибок с улучшенной логикой
       this.peer.on('error', (err: Error) => {
@@ -562,12 +805,25 @@ export class WebRTCService {
       this.localStream = null
     }
 
+    if (this.localScreenStream) {
+      this.localScreenStream.getTracks().forEach(track => {
+        try {
+          track.stop()
+          logger.log('Stopped screen track:', track.kind, track.label)
+        } catch (err) {
+          logger.warn('Error stopping screen track:', err)
+        }
+      })
+      this.localScreenStream = null
+    }
+
     if (this.peer && !this.peer.destroyed) {
       this.peer.destroy()
       this.peer = null
     }
 
     this.remoteStream = null
+    this.remoteScreenStream = null
     this.isCallActive = false
   }
 
@@ -808,7 +1064,7 @@ export class WebRTCService {
     logger.log('✅ WebRTC state force reset completed')
   }
 
-  private handleIncomingSignal(payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string, muted?: boolean, active?: boolean } }) {
+  private handleIncomingSignal(payload: { payload: { type: string, signal?: SimplePeer.SignalData, from: string, muted?: boolean, active?: boolean, sharing?: boolean } }) {
     const { type, signal, from, muted } = payload.payload
 
     logger.log('📡 Received WebRTC signal:', payload)
@@ -860,23 +1116,85 @@ export class WebRTCService {
       return
     }
 
+    // Обработка screen_share сигнала
+    if (type === 'screen_share') {
+      const sharing = payload.payload.sharing as boolean
+      console.log(`📺 RECEIVED SCREEN SHARE: from=${from.slice(0, 8)}, sharing=${sharing}`)
+      logger.log(`📺 [User ${this.currentUserId.slice(0, 8)}] Received screen share status from ${from.slice(0, 8)}: ${sharing ? 'started' : 'stopped'}`)
+
+      if (sharing) {
+        // Если sharing=true, проверяем текущий remote stream на видео треки
+        if (this.remoteStream) {
+          const videoTracks = this.remoteStream.getVideoTracks()
+          if (videoTracks.length > 0) {
+            const screenStream = new MediaStream(videoTracks)
+            this.remoteScreenStream = screenStream
+            this.onRemoteScreenStream?.(screenStream)
+            logger.log('Screen sharing activated from existing stream')
+          } else {
+            logger.log('Screen sharing signal received but no video tracks found in remote stream')
+          }
+        } else {
+          logger.log('Screen sharing signal received but no remote stream available')
+        }
+      } else {
+        // Если стрим остановлен, очищаем remote screen stream
+        this.remoteScreenStream = null
+        this.onRemoteScreenStream?.(null)
+        logger.log('Screen sharing stopped')
+      }
+      return
+    }
+
+    // Обработка renegotiate_start сигнала
+    if (type === 'renegotiate_start') {
+      console.log(`🔄 RECEIVED RENEGOTIATE START: from=${from.slice(0, 8)}`)
+      logger.log(`🔄 [User ${this.currentUserId.slice(0, 8)}] Received renegotiate_start from ${from.slice(0, 8)}`)
+      this.isRenegotiating = true
+      // Сбрасываем флаг через 10 секунд (на случай если что-то пойдет не так)
+      setTimeout(() => {
+        this.isRenegotiating = false
+        logger.log('🔄 Renegotiation flag auto-reset after timeout')
+      }, 10000)
+      return
+    }
+
+    // Обработка renegotiate_end сигнала
+    if (type === 'renegotiate_end') {
+      console.log(`🔄 RECEIVED RENEGOTIATE END: from=${from.slice(0, 8)}`)
+      logger.log(`🔄 [User ${this.currentUserId.slice(0, 8)}] Received renegotiate_end from ${from.slice(0, 8)}`)
+      this.isRenegotiating = false
+      return
+    }
+
     // Проверяем что сигнал от правильного пользователя
     if (from === this.targetUserId || (type === 'offer' && !this.targetUserId)) {
-      // Если это offer сигнал - это входящий звонок
+      // Если это offer сигнал - проверяем, не является ли это частью renegotiation
       if (type === 'offer') {
-      logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)}`)
-      this.incomingCallerId = from
-      this.targetUserId = from
-      this.onStateChange?.('receiving')
+        const now = Date.now()
+        // Если мы в процессе renegotiation или в период игнорирования offer'ов, игнорируем offer как новый звонок
+        if ((this.isRenegotiating && this.isCallActive) || now < this.ignoreOffersUntil) {
+          logger.log(`🔄 [User ${this.currentUserId.slice(0, 8)}] Ignoring offer during renegotiation or cooldown from ${from.slice(0, 8)} (${now < this.ignoreOffersUntil ? 'cooldown' : 'renegotiation'})`)
+          // Сбрасываем флаг renegotiation через 5 секунд (на случай если что-то пойдет не так)
+          setTimeout(() => {
+            this.isRenegotiating = false
+            logger.log('🔄 Renegotiation flag reset after timeout')
+          }, 5000)
+        } else {
+          logger.log(`📞 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)}`)
+          this.incomingCallerId = from
+          this.targetUserId = from
+          this.onStateChange?.('receiving')
 
-      // Запускаем рингтон для входящего звонка
-      this.playRingtone()
+          // Запускаем рингтон для входящего звонка
+          this.playRingtone()
 
-      // Для offer сигнала - НЕ инициализируем peer автоматически!
-      // Peer будет создан только после явного принятия звонка через answerCall()
-      logger.log(`🎯 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)} - waiting for user acceptance`)
-      this.isCallActive = false
-    }
+          // Для offer сигнала - НЕ инициализируем peer автоматически!
+          // Peer будет создан только после явного принятия звонка через answerCall()
+          logger.log(`🎯 [User ${this.currentUserId.slice(0, 8)}] Received call offer from ${from.slice(0, 8)} - waiting for user acceptance`)
+          this.isCallActive = false
+        }
+      }
 
       // Если peer готов, обрабатываем сигнал
       if (this.peer && !this.peer.destroyed) {
@@ -981,7 +1299,15 @@ export class WebRTCService {
     return this.localStream
   }
 
-  async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData, muted?: boolean, active?: boolean }) {
+  getRemoteScreenStream(): MediaStream | null {
+    return this.remoteScreenStream
+  }
+
+  getLocalScreenStream(): MediaStream | null {
+    return this.localScreenStream
+  }
+
+  async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData, muted?: boolean, active?: boolean, sharing?: boolean }) {
     console.log(`📤 🔵 SENDING SIGNAL:`, data)
     try {
       if (this.peer?.destroyed) {
@@ -1015,7 +1341,9 @@ export class WebRTCService {
             type: data.type,
             signal: data.signal,
             from: data.from,
-            muted: data.muted
+            muted: data.muted,
+            active: data.active,
+            sharing: data.sharing
           }
         })
 
@@ -1034,7 +1362,9 @@ export class WebRTCService {
               to: data.to,
               from: data.from,
               signal: data.signal,
-              muted: data.muted
+              muted: data.muted,
+              active: data.active,
+              sharing: data.sharing
             })
           })
 

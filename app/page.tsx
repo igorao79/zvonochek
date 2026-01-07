@@ -12,6 +12,7 @@ import CallInterface from '@/components/CallInterface'
 import UserList from '@/components/UserList'
 import SettingsModal from '@/components/SettingsModal'
 import FloatingLines from '@/components/FloatingLines'
+import ScreenShareDisplay from '@/components/ScreenShareDisplay'
 
 export default function AudioCallPage() {
   const [callState, setCallState] = useState<CallState>('idle')
@@ -31,6 +32,9 @@ export default function AudioCallPage() {
   const [voiceActivity, setVoiceActivity] = useState<{ local: boolean, remote: boolean }>({ local: false, remote: false })
   const [remoteMuted, setRemoteMuted] = useState(false)
   const [remoteVoiceActivity, setRemoteVoiceActivity] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null)
+  const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null)
 
   // Debug: отслеживаем изменения remoteMuted
   useEffect(() => {
@@ -301,6 +305,8 @@ export default function AudioCallPage() {
         } else if (state === 'idle') {
           // Очищаем при завершении звонка
           setCurrentPeerId(null)
+          setIsStreaming(false)
+          setRemoteScreenStream(null)
           // Очищаем peerUserId в WebRTCService
           if (webrtcServiceRef.current) {
             webrtcServiceRef.current.setPeerUserId(null)
@@ -331,6 +337,10 @@ export default function AudioCallPage() {
         if (Math.random() < 0.01) { // 1% от изменений
           console.log(`🗣️ Remote voice activity: ${active ? 'speaking' : 'quiet'}`)
         }
+      },
+      onRemoteScreenStream: (stream) => {
+        setRemoteScreenStream(stream)
+        console.log(`📺 Remote screen stream: ${stream ? 'received' : 'stopped'}`)
       },
     })
 
@@ -488,6 +498,9 @@ export default function AudioCallPage() {
     let localSource: MediaStreamAudioSourceNode | null = null
     let remoteSource: MediaStreamAudioSourceNode | null = null
     let animationFrame: number
+    let lastSentLocalActivity = false
+    let lastSentTime = 0
+    const SEND_INTERVAL = 2000 // Отправляем сигнал не чаще чем раз в 2 секунды
 
     const initVoiceDetection = async () => {
       try {
@@ -512,6 +525,7 @@ export default function AudioCallPage() {
 
         const detectVoice = () => {
           const newVoiceActivity = { local: false, remote: false }
+          const now = Date.now()
 
           // Check local voice
           if (localAnalyser) {
@@ -529,22 +543,27 @@ export default function AudioCallPage() {
             newVoiceActivity.remote = remoteAverage > 15 // Lower threshold for voice detection
           }
 
-          // Debug logging (only sometimes to avoid spam)
-          if (Math.random() < 0.01) { // Log 1% of the time
-            logger.log('Voice activity levels:', {
-              local: newVoiceActivity.local ? 'ACTIVE' : 'quiet',
-              remote: newVoiceActivity.remote ? 'ACTIVE' : 'quiet',
-              localLevel: localAnalyser ? (new Uint8Array(localAnalyser.frequencyBinCount).reduce((a: number, b: number) => a + b) / localAnalyser.frequencyBinCount) : 0,
-              remoteLevel: remoteAnalyser ? (new Uint8Array(remoteAnalyser.frequencyBinCount).reduce((a: number, b: number) => a + b) / remoteAnalyser.frequencyBinCount) : 0
-            })
-          }
-
+          // Обновляем локальное состояние без задержек
           setVoiceActivity({ local: newVoiceActivity.local, remote: remoteVoiceActivity })
 
-          // Отправляем статус голосовой активности собеседнику (только если изменилось)
-          if (webrtcServiceRef.current && callState === 'connected') {
+          // Отправляем статус голосовой активности только если:
+          // 1. Изменилось состояние активности
+          // 2. Прошло достаточно времени с момента последней отправки
+          if (webrtcServiceRef.current && callState === 'connected' &&
+              (newVoiceActivity.local !== lastSentLocalActivity || now - lastSentTime > SEND_INTERVAL)) {
             webrtcServiceRef.current.sendVoiceActivityStatus(newVoiceActivity.local)
+            lastSentLocalActivity = newVoiceActivity.local
+            lastSentTime = now
+
+            // Логируем только изменения состояния
+            if (newVoiceActivity.local !== voiceActivity.local) {
+              logger.log('Voice activity changed:', {
+                local: newVoiceActivity.local ? 'ACTIVE' : 'quiet',
+                level: localAnalyser ? (new Uint8Array(localAnalyser.frequencyBinCount).reduce((a: number, b: number) => a + b) / localAnalyser.frequencyBinCount) : 0
+              })
+            }
           }
+
           animationFrame = requestAnimationFrame(detectVoice)
         }
 
@@ -570,7 +589,7 @@ export default function AudioCallPage() {
         audioContext.close()
       }
     }
-  }, [callState])
+  }, [callState, voiceActivity.local]) // Добавили зависимость от voiceActivity.local
 
   const handleStartCall = async (userId: string) => {
     if (!userId.trim()) {
@@ -616,6 +635,12 @@ export default function AudioCallPage() {
   }, [contacts, allUsers, currentUser])
 
   const handleEndCall = async () => {
+    // Останавливаем стрим экрана если он активен
+    if (isStreaming) {
+      webrtcServiceRef.current?.stopScreenShare()
+      setIsStreaming(false)
+    }
+
     await webrtcServiceRef.current?.endCall()
 
     // Сбрасываем статус микрофона в базе данных
@@ -634,6 +659,7 @@ export default function AudioCallPage() {
     setIncomingCallerId(null)
     setCurrentPeerId(null)
     setRemoteMuted(false)
+    setRemoteScreenStream(null)
     setCallState('idle')
   }
 
@@ -842,6 +868,33 @@ export default function AudioCallPage() {
         console.log(`⚠️ Cannot send mute status: callState=${callState}, webrtcService=${!!webrtcServiceRef.current}`)
       }
     }
+  }
+
+  const toggleScreenShare = async () => {
+    if (!webrtcServiceRef.current) return
+
+    try {
+      if (isStreaming) {
+        // Останавливаем стрим
+        webrtcServiceRef.current.stopScreenShare()
+        setIsStreaming(false)
+        setLocalScreenStream(null)
+        console.log('📺 Screen sharing stopped')
+      } else {
+        // Начинаем стрим
+        const success = await webrtcServiceRef.current.startScreenShare()
+        if (success) {
+          setIsStreaming(true)
+          // Получаем локальный screen стрим для отображения
+          const localStream = webrtcServiceRef.current.getLocalScreenStream()
+          setLocalScreenStream(localStream)
+          console.log('📺 Screen sharing started')
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error toggling screen share:', error)
+      setError('Ошибка при переключении демонстрации экрана')
+    }
   } 
 
   return (
@@ -893,6 +946,7 @@ export default function AudioCallPage() {
         isMuted={isMuted}
         remoteMuted={remoteMuted}
         remoteVoiceActivity={remoteVoiceActivity}
+        isStreaming={isStreaming}
         onAcceptCall={() => {
           // Всегда начинаем со включенным микрофоном при ответе на звонок
           setIsMuted(false)
@@ -906,6 +960,7 @@ export default function AudioCallPage() {
         }}
         onEndCall={handleEndCall}
         onToggleMute={toggleMute}
+        onToggleScreenShare={toggleScreenShare}
       />
 
       {/* Аудио элементы (скрыты) */}
@@ -938,6 +993,30 @@ export default function AudioCallPage() {
         onDisplayNameChange={setSettingsDisplayName}
         onAvatarSelect={() => settingsFileInputRef.current?.click()}
         onSave={saveSettingsProfile}
+      />
+
+      {/* Local Screen Share Display (для пользователя, который запускает стрим) */}
+      <ScreenShareDisplay
+        stream={localScreenStream}
+        isLocal={true}
+        onClose={() => {
+          // При закрытии локального стрима останавливаем его
+          if (isStreaming) {
+            toggleScreenShare()
+          }
+          console.log('📺 Local screen share display closed by user')
+        }}
+      />
+
+      {/* Remote Screen Share Display (для просмотра стрима собеседника) */}
+      <ScreenShareDisplay
+        stream={remoteScreenStream}
+        isLocal={false}
+        onClose={() => {
+          // При закрытии окна стрима ничего не делаем,
+          // стрим остановится автоматически когда собеседник остановит демонстрацию
+          console.log('📺 Remote screen share display closed by user')
+        }}
       />
 
         {/* Hidden file input for avatar upload */}

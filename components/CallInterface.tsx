@@ -6,6 +6,7 @@ import { User, CallState } from '@/lib/types'
 import { FiPhone, FiPhoneIncoming, FiPhoneCall, FiMicOff } from 'react-icons/fi'
 import { MdCallEnd } from 'react-icons/md'
 import { AiOutlineCheck } from 'react-icons/ai'
+import { BsDisplay } from 'react-icons/bs'
 
 interface CallInterfaceProps {
   callState: CallState
@@ -19,10 +20,12 @@ interface CallInterfaceProps {
   isMuted: boolean
   remoteMuted?: boolean // Статус микрофона собеседника
   remoteVoiceActivity?: boolean // Голосовая активность собеседника
+  isStreaming?: boolean // Статус демонстрации экрана
   onAcceptCall: () => void
   onRejectCall: () => void
   onEndCall: () => void
   onToggleMute: () => void
+  onToggleScreenShare?: () => void // Функция переключения демонстрации экрана
 }
 
 export default function CallInterface({
@@ -37,10 +40,12 @@ export default function CallInterface({
   isMuted,
   remoteMuted = false,
   remoteVoiceActivity = false,
+  isStreaming = false,
   onAcceptCall,
   onRejectCall,
   onEndCall,
-  onToggleMute
+  onToggleMute,
+  onToggleScreenShare
 }: CallInterfaceProps) {
   const [callDuration, setCallDuration] = useState(0)
   const [showRealContent, setShowRealContent] = useState(false)
@@ -455,6 +460,20 @@ export default function CallInterface({
                   {isMuted ? 'Включить' : 'Выключить'}
                   {isMuted && <FiMicOff className="text-lg sm:text-xl text-red-500 ml-1" />}
                 </button>
+
+                  {onToggleScreenShare && callState === 'connected' && (
+                    <button
+                      onClick={onToggleScreenShare}
+                      className={`cursor-pointer ${
+                        isStreaming
+                          ? 'bg-[#950740]/20 hover:bg-[#950740]/30 border-[#950740] text-[#950740]'
+                          : 'bg-[#4E4E50]/10 hover:bg-[#4E4E50]/20 border-[#4E4E50]/30'
+                      } border-2 px-4 sm:px-6 py-2 sm:py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 backdrop-blur-lg text-sm sm:text-base`}
+                    >
+                      <BsDisplay className="w-4 h-4 sm:w-5 sm:h-5" />
+                      {isStreaming ? 'Стоп стрим' : 'Стрим'}
+                    </button>
+                  )}
 
                   <button
                     onClick={onEndCall}

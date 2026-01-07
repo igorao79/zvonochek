@@ -218,3 +218,4 @@ export const handlePeerClose = (
   // endCall() будет вызван через обработчик события в CallInterface
 }
 
+
