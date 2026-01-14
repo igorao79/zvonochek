@@ -12,17 +12,12 @@ interface ScreenShareDisplayProps {
 export default function ScreenShareDisplay({ stream, onClose, isLocal = false }: ScreenShareDisplayProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isMinimized, setIsMinimized] = useState(true)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [position, setPosition] = useState(() => ({
+    x: typeof window !== 'undefined' ? window.innerWidth - 340 : 0,
+    y: typeof window !== 'undefined' ? window.innerHeight - 284 : 0
+  }))
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-
-  // Инициализация позиции после монтирования компонента
-  useEffect(() => {
-    setPosition({
-      x: window.innerWidth - 340,
-      y: window.innerHeight - 284
-    })
-  }, [])
 
   useEffect(() => {
     const videoElement = videoRef.current
@@ -43,6 +38,21 @@ export default function ScreenShareDisplay({ stream, onClose, isLocal = false }:
       }
     }
   }, [stream, isLocal])
+
+  // Восстановление стрима при переключении режимов
+  useEffect(() => {
+    const videoElement = videoRef.current
+    if (!videoElement || !stream) return
+
+    // Небольшая задержка для обеспечения правильного монтирования
+    const timeoutId = setTimeout(() => {
+      videoElement.srcObject = stream
+      videoElement.play().catch(console.error)
+      console.log(`📺 ${isLocal ? 'Local' : 'Remote'} screen video restored after mode switch`)
+    }, 100)
+
+    return () => clearTimeout(timeoutId)
+  }, [isMinimized, stream, isLocal])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!isMinimized) return
@@ -131,6 +141,22 @@ export default function ScreenShareDisplay({ stream, onClose, isLocal = false }:
               }}
               onError={(e) => {
                 console.error('📺 Screen video error:', e)
+                // Попытка восстановления стрима при ошибке
+                if (stream) {
+                  setTimeout(() => {
+                    const videoElement = videoRef.current
+                    if (videoElement) {
+                      videoElement.srcObject = stream
+                      videoElement.play().catch(console.error)
+                    }
+                  }, 1000)
+                }
+              }}
+              onLoadStart={() => {
+                console.log(`📺 ${isLocal ? 'Local' : 'Remote'} screen video load started`)
+              }}
+              onLoadedData={() => {
+                console.log(`📺 ${isLocal ? 'Local' : 'Remote'} screen video data loaded`)
               }}
             />
             <div className="absolute bottom-2 left-2 bg-black/50 text-white px-2 py-1 rounded text-xs font-medium">
@@ -153,7 +179,12 @@ export default function ScreenShareDisplay({ stream, onClose, isLocal = false }:
               </button>
               {onClose && (
                 <button
-                  onClick={onClose}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    console.log('📺 Close button clicked for screen share')
+                    onClose()
+                  }}
                   className="bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-colors"
                 >
                   <FiX className="w-4 h-4" />
@@ -166,13 +197,29 @@ export default function ScreenShareDisplay({ stream, onClose, isLocal = false }:
               playsInline
               controls={false}
               muted={isLocal}
-              className="w-full h-auto max-h-[80vh] object-contain"
+              className="w-full h-auto max-h-[80vh] object-cover"
               style={{ backgroundColor: 'black' }}
               onPlay={() => {
                 console.log(`📺 ${isLocal ? 'Local' : 'Remote'} screen video started playing`)
               }}
               onError={(e) => {
                 console.error('📺 Screen video error:', e)
+                // Попытка восстановления стрима при ошибке
+                if (stream) {
+                  setTimeout(() => {
+                    const videoElement = videoRef.current
+                    if (videoElement) {
+                      videoElement.srcObject = stream
+                      videoElement.play().catch(console.error)
+                    }
+                  }, 1000)
+                }
+              }}
+              onLoadStart={() => {
+                console.log(`📺 ${isLocal ? 'Local' : 'Remote'} screen video load started`)
+              }}
+              onLoadedData={() => {
+                console.log(`📺 ${isLocal ? 'Local' : 'Remote'} screen video data loaded`)
               }}
             />
             <div className="absolute bottom-4 left-4 bg-black/50 text-white px-3 py-1 rounded-full text-sm font-medium">

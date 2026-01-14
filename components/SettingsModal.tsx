@@ -102,24 +102,29 @@ export default function SettingsModal({
             <h3 className="text-base sm:text-lg font-semibold text-white mb-3">Аватар</h3>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
               <div className="relative">
-                        <div className="w-16 h-16 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden">
-                  {user?.avatar_url ? (
-                    <Image
-                      src={user.avatar_url}
-                      alt="Avatar"
-                      width={64}
-                      height={64}
-                      className="w-full h-full object-cover"
-                      priority
-                      placeholder="blur"
-                      blurDataURL="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzIiIGZpbGw9IiM0RTFFNTAiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSIyMCIgeT0iMjAiPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEwIiByPSIyIiBmaWxsPSIjNkYyMjMyIi8+CjxwYXRoIGQ9Ik0xMiAxNWM0IDAgOC0yIDgtN3MtNC03LTgtN3oiIGZpbGw9IiM2RjIyMzIi8+Cjwvc3ZnPgo8L3N2Zz4K"
-                    />
-                  ) : (
-                    <span className="text-xl text-white">
-                      {displayName.charAt(0).toUpperCase() || user?.email.charAt(0).toUpperCase()}
-                    </span>
-                  )}
-                </div>
+                {user ? (
+                  <div className="w-16 h-16 bg-gradient-to-br from-[#6F2232] to-[#950740] rounded-full flex items-center justify-center overflow-hidden">
+                    {user?.avatar_url ? (
+                      <Image
+                        src={user.avatar_url}
+                        alt="Avatar"
+                        width={64}
+                        height={64}
+                        className="w-full h-full object-cover"
+                        priority
+                        placeholder="blur"
+                        blurDataURL="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMzIiIGZpbGw9IiM0RTFFNTAiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4PSIyMCIgeT0iMjAiPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEwIiByPSIyIiBmaWxsPSIjNkYyMjMyIi8+CjxwYXRoIGQ9Ik0xMiAxNWM0IDAgOC0yIDgtN3MtNC03LTgtN3oiIGZpbGw9IiM2RjIyMzIi8+Cjwvc3ZnPgo8L3N2Zz4K"
+                      />
+                    ) : (
+                      <span className="text-xl text-white">
+                        {displayName.charAt(0).toUpperCase() || user?.email.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  /* Skeleton загрузка */
+                  <div className="w-16 h-16 bg-gray-300 rounded-full animate-pulse"></div>
+                )}
                 {uploading && (
                   <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
@@ -147,12 +152,16 @@ export default function SettingsModal({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-white mb-1">Email</label>
-              <input
-                type="email"
-                value={user?.email || ''}
-                disabled
-                        className="w-full px-3 py-2 bg-[#4E4E50] border border-[#6F2232] rounded-lg text-gray-300 cursor-not-allowed text-sm"
-              />
+              {user ? (
+                <input
+                  type="email"
+                  value={user?.email || ''}
+                  disabled
+                          className="w-full px-3 py-2 bg-[#4E4E50] border border-[#6F2232] rounded-lg text-gray-300 cursor-not-allowed text-sm"
+                />
+              ) : (
+                <div className="w-full h-10 bg-gray-300 rounded-lg animate-pulse"></div>
+              )}
               <p className="text-xs text-gray-400 mt-1">Email изменить нельзя</p>
             </div>
 
@@ -160,18 +169,22 @@ export default function SettingsModal({
               <label className="block text-sm font-medium text-white mb-1">
                 Отображаемое имя <span className="text-red-400">*</span>
               </label>
-              <input
-                type="text"
-                value={displayName}
-                onChange={(e) => handleDisplayNameChange(e.target.value)}
-                placeholder="Как вас будут видеть другие пользователи"
-                        className={`w-full px-3 py-2 bg-[#4E4E50]/20 border rounded-lg focus:ring-2 backdrop-blur-lg text-white placeholder-gray-400 text-sm ${
-                          displayName && displayNameExists
-                            ? 'border-red-500 focus:ring-red-500 focus:border-red-500'
-                            : 'border-[#4E4E50]/30 focus:ring-[#950740] focus:border-[#950740]'
-                        }`}
-                maxLength={50}
-              />
+              {user ? (
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => handleDisplayNameChange(e.target.value)}
+                  placeholder="Как вас будут видеть другие пользователи"
+                          className={`w-full px-3 py-2 bg-[#4E4E50]/20 border rounded-lg focus:ring-2 backdrop-blur-lg text-white placeholder-gray-400 text-sm ${
+                            displayName && displayNameExists
+                              ? 'border-red-500 focus:ring-red-500 focus:border-red-500'
+                              : 'border-[#4E4E50]/30 focus:ring-[#950740] focus:border-[#950740]'
+                          }`}
+                  maxLength={50}
+                />
+              ) : (
+                <div className="w-full h-10 bg-gray-300 rounded-lg animate-pulse"></div>
+              )}
               {displayName && displayNameExists && (
                 <p className="text-red-400 text-xs mt-1">Это имя уже используется</p>
               )}

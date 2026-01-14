@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import { User } from '@/lib/types'
 import { FiSettings, FiLogOut } from 'react-icons/fi'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useLayoutEffect } from 'react'
 
 interface HeaderProps {
   currentUser: User | null
@@ -15,15 +15,12 @@ interface HeaderProps {
 export default function Header({ currentUser, loadingProfile = false, onOpenSettings, onLogout }: HeaderProps) {
   const [showRealContent, setShowRealContent] = useState(false)
 
-  // Задержка появления реального контента после загрузки данных
-  useEffect(() => {
-    // Устанавливаем с задержкой только когда пользователь загружен
+  // Управление появлением профиля
+  useLayoutEffect(() => {
     if (currentUser && !loadingProfile) {
-      const timer = setTimeout(() => {
-        setShowRealContent(true)
-      }, 1000) // 1 секунда задержки
-
-      return () => clearTimeout(timer)
+      setShowRealContent(true)
+    } else {
+      setShowRealContent(false)
     }
   }, [currentUser, loadingProfile])
   return (

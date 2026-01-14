@@ -14,6 +14,58 @@ import SettingsModal from '@/components/SettingsModal'
 import FloatingLines from '@/components/FloatingLines'
 import ScreenShareDisplay from '@/components/ScreenShareDisplay'
 
+// Функции для кэширования профиля
+const CACHE_KEY = 'user_profile_cache'
+const CACHE_EXPIRY = 24 * 60 * 60 * 1000 // 24 часа
+
+interface CachedProfile {
+  user: User
+  timestamp: number
+}
+
+const saveProfileToCache = (profile: User) => {
+  try {
+    const cachedData: CachedProfile = {
+      user: profile,
+      timestamp: Date.now()
+    }
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cachedData))
+    logger.log('Profile saved to cache')
+  } catch (error) {
+    logger.warn('Failed to save profile to cache:', error)
+  }
+}
+
+const clearProfileCache = () => {
+  try {
+    localStorage.removeItem(CACHE_KEY)
+    logger.log('Profile cache cleared')
+  } catch (error) {
+    logger.warn('Failed to clear profile cache:', error)
+  }
+}
+
+const loadProfileFromCache = (): User | null => {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY)
+    if (!cached) return null
+
+    const cachedData: CachedProfile = JSON.parse(cached)
+
+    // Проверяем срок действия кэша
+    if (Date.now() - cachedData.timestamp > CACHE_EXPIRY) {
+      localStorage.removeItem(CACHE_KEY)
+      return null
+    }
+
+    logger.log('Profile loaded from cache')
+    return cachedData.user
+  } catch (error) {
+    logger.warn('Failed to load profile from cache:', error)
+    return null
+  }
+}
+
 export default function AudioCallPage() {
   const [callState, setCallState] = useState<CallState>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -171,27 +223,16 @@ export default function AudioCallPage() {
         router.push('/login')
         return
       }
-      // Загружаем профиль пользователя
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
 
-      // Устанавливаем данные пользователя
-      if (!profileError && profile) {
-        setCurrentUser({
-          id: user.id,
-          email: user.email || '',
-          display_name: profile.display_name,
-          avatar_url: profile.avatar_url,
-          created_at: profile.created_at,
-          updated_at: profile.updated_at,
-          online: true
-        })
+      // Сначала пытаемся загрузить профиль из кэша
+      const cachedProfile = loadProfileFromCache()
+      if (cachedProfile && cachedProfile.id === user.id) {
+        setCurrentUser(cachedProfile)
+        setLoadingProfile(false)
+        logger.log('Using cached profile, loading fresh data in background')
       } else {
-        // Если профиля нет, создаем базовый
-        setCurrentUser({
+        // Если кэша нет, устанавливаем базового пользователя сразу
+        const tempUser: User = {
           id: user.id,
           email: user.email || '',
           display_name: '',
@@ -199,11 +240,72 @@ export default function AudioCallPage() {
           created_at: user.created_at || '',
           updated_at: user.updated_at || '',
           online: true
-        })
+        }
+        setCurrentUser(tempUser)
+        setLoadingProfile(false)
+        logger.log('No cached profile, showing temp user while loading from server')
       }
 
-      // Профиль загружен - завершаем загрузку ПОСЛЕ установки данных
-      setLoadingProfile(false)
+      // Загружаем актуальные данные с сервера
+      try {
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single()
+
+        let userData: User
+
+        // Устанавливаем данные пользователя
+        if (!profileError && profile) {
+          userData = {
+            id: user.id,
+            email: user.email || '',
+            display_name: profile.display_name,
+            avatar_url: profile.avatar_url,
+            created_at: profile.created_at,
+            updated_at: profile.updated_at,
+            online: true
+          }
+        } else {
+          // Если профиля нет, создаем базовый
+          userData = {
+            id: user.id,
+            email: user.email || '',
+            display_name: '',
+            avatar_url: '',
+            created_at: user.created_at || '',
+            updated_at: user.updated_at || '',
+            online: true
+          }
+        }
+
+        // Сохраняем в кэш
+        saveProfileToCache(userData)
+
+        // Обновляем состояние
+        setCurrentUser(userData)
+        setLoadingProfile(false)
+
+      } catch (error) {
+        logger.error('Error loading profile:', error)
+
+        // Если произошла ошибка и у нас нет кэшированного профиля, показываем базовый
+        if (!cachedProfile || cachedProfile.id !== user.id) {
+          const fallbackUser: User = {
+            id: user.id,
+            email: user.email || '',
+            display_name: '',
+            avatar_url: '',
+            created_at: user.created_at || '',
+            updated_at: user.updated_at || '',
+            online: true
+          }
+          setCurrentUser(fallbackUser)
+        }
+
+        setLoadingProfile(false)
+      }
 
       // Инициализация канала для получения входящих звонков ПЕРВЫМ ДЕЛОМ
       if (webrtcServiceRef.current) {
@@ -418,7 +520,7 @@ export default function AudioCallPage() {
         // Если изменился профиль текущего пользователя, обновляем его данные
         if (payload.new && typeof payload.new === 'object' && 'id' in payload.new && payload.new.id === currentUser.id) {
           const profileData = payload.new as User
-          setCurrentUser({
+          const updatedUser = {
             id: profileData.id || currentUser.id,
             email: profileData.email || currentUser.email,
             display_name: profileData.display_name || currentUser.display_name,
@@ -426,7 +528,10 @@ export default function AudioCallPage() {
             created_at: profileData.created_at || currentUser.created_at,
             updated_at: profileData.updated_at || currentUser.updated_at,
             online: true
-          })
+          }
+          setCurrentUser(updatedUser)
+          // Обновляем кэш при изменении профиля через realtime
+          saveProfileToCache(updatedUser)
         }
 
         // Обновляем статус пользователя в списке в реальном времени
@@ -676,6 +781,8 @@ export default function AudioCallPage() {
   }
 
   const handleLogout = async () => {
+    // Очищаем кэш профиля при выходе
+    clearProfileCache()
     await supabase.auth.signOut()
     router.push('/login')
   }
@@ -738,10 +845,14 @@ export default function AudioCallPage() {
       if (error) throw error
 
       // Update current user state
-      setCurrentUser({
+      const updatedUser = {
         ...settingsUser,
         display_name: settingsDisplayName
-      })
+      }
+      setCurrentUser(updatedUser)
+
+      // Обновляем кэш при изменении профиля
+      saveProfileToCache(updatedUser)
 
       closeSettingsModal()
     } catch (error) {
@@ -794,6 +905,9 @@ export default function AudioCallPage() {
       const updatedUser = { ...settingsUser, avatar_url: avatarUrl }
       setSettingsUser(updatedUser)
       setCurrentUser(updatedUser)
+
+      // Обновляем кэш при изменении аватара
+      saveProfileToCache(updatedUser)
     } catch (error) {
       logger.error('Error uploading avatar:', error)
       alert('Ошибка загрузки аватара')

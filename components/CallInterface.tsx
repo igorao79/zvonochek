@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useLayoutEffect } from 'react'
 import { User, CallState } from '@/lib/types'
 import { FiPhone, FiPhoneIncoming, FiPhoneCall, FiMicOff } from 'react-icons/fi'
 import { MdCallEnd } from 'react-icons/md'
@@ -88,13 +88,10 @@ export default function CallInterface({
     }
   }, [callState])
 
-  // Управление появлением профиля с задержкой
-  useEffect(() => {
+  // Управление появлением профиля
+  useLayoutEffect(() => {
     if (currentUser) {
-      const timer = setTimeout(() => {
-        setShowRealContent(true)
-      }, 1000) // 1 секунда задержки после загрузки данных
-      return () => clearTimeout(timer)
+      setShowRealContent(true)
     } else {
       setShowRealContent(false)
     }
@@ -186,7 +183,7 @@ export default function CallInterface({
                 </div>
                 {/* Индикатор выключенного микрофона - абсолютное позиционирование */}
                 {callState === 'connected' && isMuted && (
-                  <div className="absolute bottom-0 right-0 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
+                  <div className="absolute bottom-0 right-5 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
                     <FiMicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                   </div>
                 )}
@@ -423,7 +420,7 @@ export default function CallInterface({
             </div>
             {/* Индикатор выключенного микрофона собеседника */}
             {callState === 'connected' && remoteMuted && (
-              <div className="absolute bottom-0 right-0 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
+              <div className="absolute bottom-0 right-5 w-5 h-5 sm:w-6 sm:h-6 border-2 border-[#6F2232] rounded-full flex items-center justify-center z-50" style={{ transform: 'translate(15px, -25px)', color: '#C3073F' }}>
                 <FiMicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
               </div>
             )}
