@@ -1308,7 +1308,6 @@ export class WebRTCService {
   }
 
   async sendSignal(data: { type: string, from: string, to: string, signal?: SimplePeer.SignalData, muted?: boolean, active?: boolean, sharing?: boolean }) {
-    console.log(`📤 🔵 SENDING SIGNAL:`, data)
     try {
       if (this.peer?.destroyed) {
         logger.log('Peer destroyed, not sending signal')

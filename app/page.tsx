@@ -540,7 +540,7 @@ export default function AudioCallPage() {
             const localDataArray = new Uint8Array(localAnalyser.frequencyBinCount)
             localAnalyser.getByteFrequencyData(localDataArray)
             const localAverage = localDataArray.reduce((a: number, b: number) => a + b) / localAnalyser.frequencyBinCount
-            newVoiceActivity.local = localAverage > 30 // Higher threshold for voice detection
+            newVoiceActivity.local = localAverage > 15 // Lower threshold for more sensitive voice detection
           }
 
           // Check remote voice
@@ -548,7 +548,7 @@ export default function AudioCallPage() {
             const remoteDataArray = new Uint8Array(remoteAnalyser.frequencyBinCount)
             remoteAnalyser.getByteFrequencyData(remoteDataArray)
             const remoteAverage = remoteDataArray.reduce((a: number, b: number) => a + b) / remoteAnalyser.frequencyBinCount
-            newVoiceActivity.remote = remoteAverage > 30 // Higher threshold for voice detection
+            newVoiceActivity.remote = remoteAverage > 15 // Lower threshold for more sensitive voice detection
           }
 
           // Обновляем локальное состояние
@@ -561,7 +561,6 @@ export default function AudioCallPage() {
             // Устанавливаем debounce timeout
             voiceDebounceTimeout = setTimeout(() => {
               signalCount++
-              console.log(`🎤 [${signalCount}] VOICE ACTIVITY CHANGE: ${lastSentLocalActivity} -> ${newVoiceActivity.local}`)
               webrtcServiceRef.current?.sendVoiceActivityStatus(newVoiceActivity.local)
               lastSentLocalActivity = newVoiceActivity.local
               voiceDebounceTimeout = null
@@ -574,10 +573,6 @@ export default function AudioCallPage() {
             }, VOICE_DEBOUNCE_MS)
           }
 
-          // Логируем каждые 100 проверок для отладки
-          if (frameCount % 100 === 0) {
-            console.log(`🎤 Check ${frameCount}: local=${newVoiceActivity.local}, remote=${newVoiceActivity.remote}, signals=${signalCount}`)
-          }
         }, 100) // Проверяем каждые 100ms вместо 60fps
 
         console.log('🎤 Voice detection interval started')
