@@ -40,7 +40,8 @@ export default function Header({ currentUser, loadingProfile = false, onOpenSett
           {(loadingProfile || !currentUser || !showRealContent) && (
             <div className={`flex items-center gap-2 sm:gap-3 transition-opacity duration-500 ${showRealContent ? 'opacity-0 absolute inset-0' : 'opacity-100'}`}>
               <div className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 bg-gray-300 rounded-full animate-pulse shadow-lg"></div>
-              <div className="flex flex-col space-y-1">
+              {/* Текст показывается только на больших экранах, как и в реальном контенте */}
+              <div className="hidden md:flex flex-col space-y-1">
                 <div className="w-16 h-3 bg-gray-300 rounded animate-pulse"></div>
                 <div className="w-12 h-2 bg-gray-300 rounded animate-pulse"></div>
               </div>
