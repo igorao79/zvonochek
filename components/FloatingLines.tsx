@@ -413,12 +413,9 @@ const FloatingLines = memo(function FloatingLines({
         const width = window.innerWidth;
         const height = window.innerHeight;
 
-        logger.log(`📏 Window size: ${width}x${height}`);
-
         if (width > 0 && height > 0) {
           renderer.setSize(width, height);
           uniforms.iResolution.value.set(width, height, 1);
-          logger.log(`📏 FloatingLines resized: ${width}x${height}`);
         }
       }, 50);
     };
@@ -455,7 +452,6 @@ const FloatingLines = memo(function FloatingLines({
 
     const handlePointerLeave = () => {
       if (!interactive) return;
-      logger.log('👆 Mouse left canvas');
       targetInfluenceRef.current = 0.0;
     };
 

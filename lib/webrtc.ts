@@ -53,6 +53,12 @@ export class WebRTCService {
   private lastActivityTime = Date.now()
   private isOnline = true
 
+  // Ссылки на обработчики для их удаления
+  private handleBeforeUnloadBound = this.handleBeforeUnload.bind(this)
+  private handleVisibilityChangeBound = this.handleVisibilityChange.bind(this)
+  private handleOnlineBound = this.handleOnline.bind(this)
+  private handleOfflineBound = this.handleOffline.bind(this)
+
   constructor(refs: PeerRefs) {
     this.refs = refs
     // Инициализация канала будет выполнена позже при первом использовании
@@ -138,38 +144,31 @@ export class WebRTCService {
 
   // Установка ID собеседника
   setPeerUserId(userId: string | null) {
-    console.log(`👥 WebRTCService: Setting peer user ID from ${this.peerUserId?.slice(0, 8) || 'null'} to ${userId?.slice(0, 8) || 'null'}`)
-    this.peerUserId = userId
-    logger.log(`👥 WebRTCService: Peer user ID set to ${userId?.slice(0, 8) || 'null'}`)
+    if (this.peerUserId !== userId) {
+      this.peerUserId = userId
+      logger.log(`👥 WebRTCService: Peer user ID set to ${userId?.slice(0, 8) || 'null'}`)
+    }
   }
 
   // Отправка статуса микрофона собеседнику
   async sendMuteStatus(isMuted: boolean) {
-    console.log(`🎤 sendMuteStatus called: isMuted=${isMuted}, peerUserId=${this.peerUserId?.slice(0, 8) || 'null'}, currentUserId=${this.currentUserId?.slice(0, 8) || 'null'}`)
-
     if (!this.peerUserId) {
-      console.warn('❌ Cannot send mute status: no peer user ID')
-      logger.warn('Cannot send mute status: no peer user ID')
       return
     }
 
     if (!this.currentUserId) {
-      console.warn('❌ Cannot send mute status: no current user ID')
       return
     }
 
     try {
-      console.log(`📤 Sending mute status signal: type='mute_status', from=${this.currentUserId.slice(0, 8)}, to=${this.peerUserId.slice(0, 8)}, muted=${isMuted}`)
       await this.sendSignal({
         type: 'mute_status',
         from: this.currentUserId,
         to: this.peerUserId,
         muted: isMuted
       })
-      console.log(`✅ Mute status signal sent successfully`)
       logger.log(`📡 [User ${this.currentUserId.slice(0, 8)}] Sent mute status to ${this.peerUserId.slice(0, 8)}: ${isMuted ? 'muted' : 'unmuted'}`)
     } catch (error) {
-      console.error('❌ Error sending mute status:', error)
       logger.error('Error sending mute status:', error)
     }
   }
@@ -895,109 +894,110 @@ export class WebRTCService {
     this.sendChannels.clear()
     // Останавливаем мониторинг соединения
     this.stopConnectionMonitoring()
+
+    // Удаляем глобальные обработчики
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('beforeunload', this.handleBeforeUnloadBound)
+      document.removeEventListener('visibilitychange', this.handleVisibilityChangeBound)
+      window.removeEventListener('online', this.handleOnlineBound)
+      window.removeEventListener('offline', this.handleOfflineBound)
+    }
+  }
+
+  // Обработчики системных событий
+  private async handleBeforeUnload() {
+    logger.log('🚨 Page unloading - checking for active call')
+
+    if (this.isCallActive && this.targetUserId) {
+      logger.log('🚨 Active call detected, sending end call signal before unload')
+
+      // Отправляем сигнал завершения синхронно
+      try {
+        if (this.targetUserId) {
+          await this.sendSignal({
+            type: 'end-call',
+            from: this.currentUserId,
+            to: this.targetUserId
+          })
+        }
+      } catch (err) {
+        logger.error('🚨 Failed to send end call signal on page unload:', err)
+      }
+
+      // Останавливаем все медиа потоки
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => {
+          try {
+            track.stop()
+          } catch (err) {
+            logger.warn('🚨 Error stopping track on page unload:', err)
+          }
+        })
+      }
+
+      // Закрываем peer соединение
+      if (this.peer && !this.peer.destroyed) {
+        try {
+          this.peer.destroy()
+        } catch (err) {
+          logger.warn('🚨 Error destroying peer on page unload:', err)
+        }
+      }
+    }
+  }
+
+  private handleVisibilityChange() {
+    const isHidden = document.hidden
+    // Уменьшаем количество логов - логируем только в дебаг режиме или при важных изменениях
+    if (this.isCallActive) {
+      logger.log('Page visibility changed:', { hidden: isHidden, visibilityState: document.visibilityState })
+    }
+
+    if (isHidden && this.isCallActive) {
+      logger.log('Page hidden during call - monitoring connection')
+    } else if (!isHidden) {
+      if (this.isCallActive) {
+        logger.log('Page visible again - checking connection')
+      }
+      this.lastActivityTime = Date.now()
+    }
+  }
+
+  private handleOnline() {
+    logger.log('🔄 Network connection restored')
+    this.isOnline = true
+    this.lastActivityTime = Date.now()
+  }
+
+  private handleOffline() {
+    logger.log('⚠️ Network connection lost')
+    this.isOnline = false
+
+    // Если мы в звонке, пытаемся восстановить соединение через 5 секунд
+    if (this.isCallActive) {
+      logger.log('📞 Call active - attempting reconnection in 5 seconds...')
+      setTimeout(() => {
+        if (!this.isOnline) {
+          logger.log('📞 Network still unavailable - ending call')
+          this.endCall()
+          this.onError?.('Соединение с интернетом потеряно. Звонок завершен.')
+        }
+      }, 5000)
+    }
   }
 
   // Идеальная обработка завершения звонка
   private setupCallTerminationHandlers() {
     if (typeof window === 'undefined') return
 
-    // 1. Обработчик закрытия вкладки/браузера
-    const handleBeforeUnload = async () => {
-      logger.log('🚨 Page unloading - checking for active call')
-
-      if (this.isCallActive && this.targetUserId) {
-        logger.log('🚨 Active call detected, sending end call signal before unload')
-
-        // Отправляем сигнал завершения синхронно
-        try {
-          if (this.targetUserId) {
-        await this.sendSignal({
-          type: 'end-call',
-          from: this.currentUserId,
-          to: this.targetUserId
-        })
-          }
-        } catch (err) {
-          logger.error('🚨 Failed to send end call signal on page unload:', err)
-        }
-
-        // Останавливаем все медиа потоки
-        if (this.localStream) {
-          this.localStream.getTracks().forEach(track => {
-            try {
-              track.stop()
-            } catch (err) {
-              logger.warn('🚨 Error stopping track on page unload:', err)
-            }
-          })
-        }
-
-        // Закрываем peer соединение
-        if (this.peer && !this.peer.destroyed) {
-          try {
-            this.peer.destroy()
-          } catch (err) {
-            logger.warn('🚨 Error destroying peer on page unload:', err)
-          }
-        }
-      }
-    }
-
-    // 2. Обработчик изменения видимости страницы
-    const handleVisibilityChange = () => {
-      const isHidden = document.hidden
-      logger.log('Page visibility changed:', { hidden: isHidden, visibilityState: document.visibilityState })
-
-      if (isHidden && this.isCallActive) {
-        logger.log('Page hidden during call - monitoring connection')
-        // Можно добавить дополнительную логику, например, уменьшить качество
-      } else if (!isHidden) {
-        logger.log('Page visible again - checking connection')
-        this.lastActivityTime = Date.now()
-      }
-    }
-
-    // 3. Обработчик изменения статуса сети
-    const handleOnline = () => {
-      logger.log('🔄 Network connection restored')
-      this.isOnline = true
-      this.lastActivityTime = Date.now()
-    }
-
-    const handleOffline = () => {
-      logger.log('⚠️ Network connection lost')
-      this.isOnline = false
-
-      // Если мы в звонке, пытаемся восстановить соединение через 5 секунд
-      if (this.isCallActive) {
-        logger.log('📞 Call active - attempting reconnection in 5 seconds...')
-        setTimeout(() => {
-          if (!this.isOnline) {
-            logger.log('📞 Network still unavailable - ending call')
-            this.endCall()
-            this.onError?.('Соединение с интернетом потеряно. Звонок завершен.')
-          }
-        }, 5000)
-      }
-    }
-
     // Регистрируем обработчики
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
+    window.addEventListener('beforeunload', this.handleBeforeUnloadBound)
+    document.addEventListener('visibilitychange', this.handleVisibilityChangeBound)
+    window.addEventListener('online', this.handleOnlineBound)
+    window.addEventListener('offline', this.handleOfflineBound)
 
     // 4. Запускаем периодическую проверку соединения
     this.startConnectionMonitoring()
-
-    // Сохраняем ссылки для очистки
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('online', handleOnline)
-      window.removeEventListener('offline', handleOffline)
-      this.stopConnectionMonitoring()
-    }
   }
 
   private startConnectionMonitoring() {

@@ -4,7 +4,6 @@ import SimplePeer from 'simple-peer'
 import type { PeerRefs } from '@/lib/types'
 import useCallStore from '@/store/useCallStore'
 import { resilientChannelManager } from '@/utils/resilientChannelManager'
-import { diagnoseConnectionFailure } from './networkDiagnostics'
 
 // Функция для попытки переподключения
 export const attemptReconnection = (
@@ -103,27 +102,6 @@ export const handlePeerError = (
     console.error('  🌐 Проблемы с STUN/TURN серверами')
     console.error('  📡 Плохое интернет-соединение')
     console.error('  👤 Собеседник внезапно отключился')
-
-    // Попробуем диагностировать ICE состояние
-    const peer = peerRefs.peerRef.current
-    if (peer && !peer.destroyed) {
-      const pc = (peer as any)._pc
-      if (pc) {
-        console.error(`📊 ICE диагностика:`, {
-          connectionState: pc.connectionState,
-          iceConnectionState: pc.iceConnectionState,
-          iceGatheringState: pc.iceGatheringState,
-          signalingState: pc.signalingState,
-          localDescription: !!pc.localDescription,
-          remoteDescription: !!pc.remoteDescription
-        })
-      }
-    }
-
-    // Запускаем диагностику сети в фоне
-    diagnoseConnectionFailure().catch(error => {
-      console.warn('Ошибка диагностики сети:', error)
-    })
 
     const { setError, endCall } = useCallStore.getState()
     setError('Не удалось установить соединение. Проверьте интернет и попробуйте снова.')
