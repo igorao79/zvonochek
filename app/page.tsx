@@ -455,10 +455,13 @@ export default function AudioCallPage() {
     initApp()
 
     return () => {
-      webrtcService.disconnect()
-      webrtcServiceRef.current = null
+      // Cleanup только при размонтировании компонента
+      if (webrtcService) {
+        webrtcService.disconnect()
+      }
     }
-  }, [router, supabase, loadUsers]) // Убрали лишние зависимости // Инициализация запускается только один раз при монтировании
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Пустой массив - инициализация только один раз при монтировании
 
   // Синхронизация онлайн статуса с Supabase
   useEffect(() => {
