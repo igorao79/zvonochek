@@ -2,27 +2,20 @@
 
 import Image from 'next/image'
 import { User } from '@/lib/types'
-import { FiSettings, FiLogOut } from 'react-icons/fi'
-import { useEffect, useState, useLayoutEffect } from 'react'
+import { FiSettings, FiLogOut, FiWifi } from 'react-icons/fi'
+// useState and useLayoutEffect are not used in this component
 
 interface HeaderProps {
   currentUser: User | null
   loadingProfile?: boolean
   onOpenSettings: () => void
+  onOpenTroubleshooter: () => void
   onLogout: () => void
 }
 
-export default function Header({ currentUser, loadingProfile = false, onOpenSettings, onLogout }: HeaderProps) {
-  const [showRealContent, setShowRealContent] = useState(false)
-
-  // Управление появлением профиля
-  useLayoutEffect(() => {
-    if (currentUser && !loadingProfile) {
-      setShowRealContent(true)
-    } else {
-      setShowRealContent(false)
-    }
-  }, [currentUser, loadingProfile])
+export default function Header({ currentUser, loadingProfile = false, onOpenSettings, onOpenTroubleshooter, onLogout }: HeaderProps) {
+  // Управление появлением профиля - используем useMemo вместо state для избежания лишних ререндеров
+  const showRealContent = currentUser && !loadingProfile
   return (
     <div className="w-screen py-3 sm:py-4 md:py-6 bg-white/5 backdrop-blur-md border-b border-white/10 shadow-xl mb-8 md:mb-12 -mx-4">
       <div className="max-w-4xl mx-auto px-4 flex justify-between items-center">
@@ -91,6 +84,14 @@ export default function Header({ currentUser, loadingProfile = false, onOpenSett
 
         {/* Кнопки */}
         <div className="flex gap-1 sm:gap-2">
+          <button
+            onClick={onOpenTroubleshooter}
+            className="cursor-pointer bg-blue-600/20 hover:bg-blue-600/30 border border-blue-600 px-2 py-1 rounded-lg transition hover:shadow-lg flex items-center justify-center gap-1 min-w-[32px] h-8"
+            title="Диагностика соединения"
+          >
+            <FiWifi className="w-4 h-4 flex-shrink-0" />
+            <span className="hidden xs:inline text-sm">Диагностика</span>
+          </button>
           <button
             onClick={onOpenSettings}
             className="cursor-pointer bg-[#950740]/20 hover:bg-[#950740]/30 border border-[#950740] px-2 py-1 rounded-lg transition hover:shadow-lg flex items-center justify-center gap-1 min-w-[32px] h-8"

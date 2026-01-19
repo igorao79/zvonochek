@@ -13,6 +13,7 @@ import UserList from '@/components/UserList'
 import SettingsModal from '@/components/SettingsModal'
 import FloatingLines from '@/components/FloatingLines'
 import ScreenShareDisplay from '@/components/ScreenShareDisplay'
+import ConnectionTroubleshooter from '@/components/ConnectionTroubleshooter'
 
 // Функции для кэширования профиля
 const CACHE_KEY = 'user_profile_cache'
@@ -68,7 +69,7 @@ const loadProfileFromCache = (): User | null => {
 
 export default function AudioCallPage() {
   const [callState, setCallState] = useState<CallState>('idle')
-  const [error, setError] = useState<string | null>(null)
+  const [, setError] = useState<string | null>(null)
   const [targetUserId, setTargetUserId] = useState<string>('')
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [loadingProfile, setLoadingProfile] = useState(true)
@@ -79,6 +80,7 @@ export default function AudioCallPage() {
   const [currentPeerId, setCurrentPeerId] = useState<string | null>(null)
   const [contacts, setContacts] = useState<string[]>([])
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [isTroubleshooterOpen, setIsTroubleshooterOpen] = useState(false)
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [isLoadingUsers, setIsLoadingUsers] = useState(false) // Флаг для предотвращения одновременных вызовов
   const [voiceActivity, setVoiceActivity] = useState<{ local: boolean, remote: boolean }>({ local: false, remote: false })
@@ -95,7 +97,7 @@ export default function AudioCallPage() {
 
   // Settings modal state
   const [settingsUser, setSettingsUser] = useState<User | null>(null)
-  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [, setSettingsLoading] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
 
   const initCompletedRef = useRef(false) // Флаг завершения инициализации
@@ -128,7 +130,7 @@ export default function AudioCallPage() {
     return diffSeconds < 60 // Онлайн, если активность была менее 1 минуты назад
   }
 
-  const loadUsers = async (userOverride?: User) => {
+  const loadUsers = useCallback(async (userOverride?: User) => {
     const userToUse = userOverride || currentUser
     if (!userToUse) {
       logger.log('loadUsers: No current user, skipping')
@@ -201,7 +203,7 @@ export default function AudioCallPage() {
       setIsLoadingUsers(false)
       logger.log('loadUsers: Finished loading')
     }
-  }
+  }, [currentUser, isLoadingUsers, contacts])
 
   useEffect(() => {
     // Предотвращаем повторную инициализацию
@@ -449,7 +451,7 @@ export default function AudioCallPage() {
     return () => {
       webrtcServiceRef.current?.disconnect()
     }
-  }, [router, supabase]) // Инициализация запускается только один раз при монтировании
+  }, [router, supabase, incomingCallerId, isMuted, loadUsers, targetUserId]) // Инициализация запускается только один раз при монтировании
 
   // Синхронизация онлайн статуса с Supabase
   useEffect(() => {
@@ -588,7 +590,7 @@ export default function AudioCallPage() {
       clearInterval(usersUpdateInterval)
       supabase.removeChannel(profilesChannel)
     }
-  }, [currentUser, supabase])
+  }, [currentUser, supabase, isLoadingUsers, loadUsers])
 
   // Voice Activity Detection
   useEffect(() => {
@@ -706,7 +708,7 @@ export default function AudioCallPage() {
         audioContext.close()
       }
     }
-  }, [callState]) // Убираем зависимость от voiceActivity.local чтобы избежать перезапусков
+  }, [callState, remoteVoiceActivity]) // Убираем зависимость от voiceActivity.local чтобы избежать перезапусков
 
   const handleStartCall = async (userId: string) => {
     if (!userId.trim()) {
@@ -1056,6 +1058,7 @@ export default function AudioCallPage() {
           currentUser={currentUser}
           loadingProfile={loadingProfile}
           onOpenSettings={openSettingsModal}
+          onOpenTroubleshooter={() => setIsTroubleshooterOpen(true)}
           onLogout={handleLogout}
         />
 
@@ -1119,6 +1122,12 @@ export default function AudioCallPage() {
         onDisplayNameChange={setSettingsDisplayName}
         onAvatarSelect={() => settingsFileInputRef.current?.click()}
         onSave={saveSettingsProfile}
+      />
+
+      {/* Connection Troubleshooter Modal */}
+      <ConnectionTroubleshooter
+        isOpen={isTroubleshooterOpen}
+        onClose={() => setIsTroubleshooterOpen(false)}
       />
 
       {/* Local Screen Share Display (для пользователя, который запускает стрим) */}

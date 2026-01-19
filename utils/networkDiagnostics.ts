@@ -11,6 +11,8 @@ export interface NetworkDiagnostics {
   latency: number
   jitter: number
   packetLoss: number
+  turnAvailable?: boolean
+  turnLatency?: number
   recommendations: string[]
 }
 
@@ -38,6 +40,11 @@ export const diagnoseConnectionFailure = async (): Promise<NetworkDiagnostics> =
     const natResult = await detectNATType()
     diagnostics.natType = natResult.natType
     diagnostics.firewallDetected = natResult.firewallDetected
+
+    // Тестирование TURN серверов
+    const turnTest = await testTurnServers()
+    diagnostics.turnAvailable = turnTest.available
+    diagnostics.turnLatency = turnTest.latency
 
     // Генерация рекомендаций
     diagnostics.recommendations = generateRecommendations(diagnostics)
@@ -149,6 +156,68 @@ const detectNATType = async (): Promise<{natType: NetworkDiagnostics['natType'],
   }
 }
 
+// Тестирование TURN серверов
+const testTurnServers = async (): Promise<{available: boolean, latency: number}> => {
+  const turnServers = [
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ]
+
+  for (const server of turnServers) {
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [server]
+      })
+
+      const startTime = performance.now()
+      let hasRelayCandidate = false
+
+      const result = await new Promise<{available: boolean, latency: number}>((resolve) => {
+        const timeout = setTimeout(() => {
+          pc.close()
+          resolve({ available: false, latency: 0 })
+        }, 10000)
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            const candidate = event.candidate.candidate
+            if (candidate.includes('relay')) {
+              hasRelayCandidate = true
+              const endTime = performance.now()
+              const latency = endTime - startTime
+              clearTimeout(timeout)
+              pc.close()
+              resolve({ available: true, latency })
+            }
+          }
+        }
+
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete' && !hasRelayCandidate) {
+            clearTimeout(timeout)
+            pc.close()
+            resolve({ available: false, latency: 0 })
+          }
+        }
+
+        pc.createDataChannel('test')
+        pc.createOffer().then(offer => pc.setLocalDescription(offer))
+      })
+
+      if (result.available) {
+        return result
+      }
+    } catch (error) {
+      console.warn('TURN server test failed:', error)
+    }
+  }
+
+  return { available: false, latency: 0 }
+}
+
 // Генерация рекомендаций на основе диагностики
 const generateRecommendations = (diagnostics: NetworkDiagnostics): string[] => {
   const recommendations: string[] = []
@@ -166,22 +235,35 @@ const generateRecommendations = (diagnostics: NetworkDiagnostics): string[] => {
     recommendations.push('Потери пакетов (>5%). Проверьте подключение к интернету')
   }
 
+  // Рекомендации по TURN серверам
+  if (diagnostics.turnAvailable === false) {
+    recommendations.push('TURN серверы недоступны. Проверьте интернет-соединение')
+  } else if (diagnostics.turnLatency && diagnostics.turnLatency > 500) {
+    recommendations.push('Высокая задержка TURN сервера (>500мс). Попробуйте другой сервер')
+  }
+
   // Рекомендации по NAT/Firewall
   switch (diagnostics.natType) {
     case 'symmetric':
-      recommendations.push('Symmetric NAT обнаружен. Рекомендуется TURN сервер')
+      recommendations.push('Symmetric NAT обнаружен. TURN серверы активированы автоматически')
       break
     case 'restricted':
     case 'port-restricted':
-      recommendations.push('Restricted NAT. Попробуйте другой браузер или сеть')
+      recommendations.push('Restricted NAT. TURN серверы помогут с подключением')
       break
     case 'unknown':
-      recommendations.push('Не удалось определить тип NAT. Проверьте firewall')
+      recommendations.push('Не удалось определить тип NAT. TURN серверы активированы для надежности')
+      break
+    case 'full-cone':
+      recommendations.push('Full-cone NAT. Соединение должно работать через STUN')
+      break
+    case 'open':
+      recommendations.push('Открытая сеть. Проблема может быть у собеседника')
       break
   }
 
   if (diagnostics.firewallDetected) {
-    recommendations.push('Firewall блокирует соединения. Временно отключите firewall')
+    recommendations.push('Firewall блокирует соединения. TURN серверы обойдут ограничения')
   }
 
   // Общие рекомендации
@@ -189,7 +271,7 @@ const generateRecommendations = (diagnostics: NetworkDiagnostics): string[] => {
     recommendations.push('Соединение выглядит стабильным. Проверьте собеседника')
   } else {
     recommendations.push('Перезагрузите роутер и попробуйте снова')
-    recommendations.push('Используйте VPN если проблема сохраняется')
+    recommendations.push('Если проблема сохраняется, попробуйте VPN или другую сеть')
   }
 
   return recommendations
@@ -203,6 +285,10 @@ export const logNetworkDiagnostics = (diagnostics: NetworkDiagnostics) => {
   console.log('⏱️ Задержка:', `${Math.round(diagnostics.latency)}ms`)
   console.log('📈 Jitter:', `${Math.round(diagnostics.jitter)}ms`)
   console.log('📦 Потери пакетов:', `${Math.round(diagnostics.packetLoss)}%`)
+  console.log('🔄 TURN доступен:', diagnostics.turnAvailable ? 'Да' : 'Нет')
+  if (diagnostics.turnLatency) {
+    console.log('⏱️ TURN задержка:', `${Math.round(diagnostics.turnLatency)}ms`)
+  }
 
   console.group('💡 Рекомендации:')
   diagnostics.recommendations.forEach(rec => console.log('•', rec))

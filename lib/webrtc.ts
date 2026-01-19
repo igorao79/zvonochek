@@ -4,7 +4,7 @@ import { CallState, PeerRefs } from '@/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { logger } from '@/lib/logger'
 import { resilientChannelManager } from '@/utils/resilientChannelManager'
-import { handlePeerError, attemptReconnection, resetReconnectionCounter, cleanupAllPeerResources, handlePeerClose } from '@/utils/webrtcHelpers'
+import { handlePeerError, attemptReconnection, resetReconnectionCounter, handlePeerClose } from '@/utils/webrtcHelpers'
 
 // Тип для доступа к RTCPeerConnection внутри SimplePeer
 interface SimplePeerWithPC extends SimplePeer.Instance {
@@ -576,17 +576,42 @@ export class WebRTCService {
 
       this.onLocalStream?.(this.localStream)
 
-      // Создаем SimplePeer
+      // Создаем SimplePeer с улучшенной конфигурацией ICE серверов
       const peerConfig = {
         initiator: isInitiator,
         trickle: true,
         stream: this.localStream,
         config: {
           iceServers: [
+            // STUN серверы (для большинства случаев)
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+
+            // TURN серверы для случаев, когда STUN недостаточно
+            // Эти серверы предоставлены сообществом для тестирования
+            // В продакшене рекомендуется использовать собственные TURN серверы
+            {
+              urls: 'turn:openrelay.metered.ca:80',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            }
           ],
-        },
+          // Оптимизации для лучшего соединения
+          iceCandidatePoolSize: 10
+        } as RTCConfiguration,
       }
 
       this.peer = new SimplePeer(peerConfig)
@@ -682,7 +707,7 @@ export class WebRTCService {
       })
 
       // Обработчик новых треков (для динамического добавления видео)
-      this.peer.on('track', (track: MediaStreamTrack, stream: MediaStream) => {
+      this.peer.on('track', (track: MediaStreamTrack) => {
         logger.log('Received new track:', {
           kind: track.kind,
           label: track.label,
@@ -701,9 +726,9 @@ export class WebRTCService {
       })
 
       // Функция для обработки треков remote stream
-      const processRemoteTracks = (stream: MediaStream) => {
-        const audioTracks = stream.getAudioTracks()
-        const videoTracks = stream.getVideoTracks()
+      const processRemoteTracks = (remoteStream: MediaStream) => {
+        const audioTracks = remoteStream.getAudioTracks()
+        const videoTracks = remoteStream.getVideoTracks()
 
         logger.log('Processing remote tracks:', {
           audio: audioTracks.length,
