@@ -6,6 +6,54 @@ import { logger } from '@/lib/logger'
 import { resilientChannelManager } from '@/utils/resilientChannelManager'
 import { handlePeerError, attemptReconnection, resetReconnectionCounter, handlePeerClose } from '@/utils/webrtcHelpers'
 
+// Кэш для ICE серверов (обновляется каждые 10 минут)
+let cachedIceServers: RTCIceServer[] | null = null
+let iceServersCacheTime = 0
+const ICE_SERVERS_CACHE_DURATION = 10 * 60 * 1000 // 10 минут
+
+// Функция для получения ICE серверов от Metered
+async function getIceServers(): Promise<RTCIceServer[]> {
+  const now = Date.now()
+
+  // Возвращаем кэшированные серверы если они еще актуальны
+  if (cachedIceServers && (now - iceServersCacheTime) < ICE_SERVERS_CACHE_DURATION) {
+    logger.log('🧊 Using cached ICE servers')
+    return cachedIceServers
+  }
+
+  const apiKey = process.env.NEXT_PUBLIC_METERED_API_KEY
+
+  if (apiKey) {
+    try {
+      logger.log('🌐 Fetching ICE servers from Metered...')
+      const response = await fetch(
+        `https://zvonochek.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`
+      )
+
+      if (response.ok) {
+        const iceServers = await response.json()
+        cachedIceServers = iceServers
+        iceServersCacheTime = now
+        logger.log('✅ ICE servers fetched from Metered:', iceServers.length, 'servers')
+        return iceServers
+      } else {
+        logger.warn('⚠️ Failed to fetch Metered ICE servers, using fallback')
+      }
+    } catch (error) {
+      logger.error('❌ Error fetching Metered ICE servers:', error)
+    }
+  } else {
+    logger.warn('⚠️ NEXT_PUBLIC_METERED_API_KEY not set, using fallback STUN servers')
+  }
+
+  // Fallback на бесплатные STUN серверы
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+  ]
+}
+
 // Тип для доступа к RTCPeerConnection внутри SimplePeer
 interface SimplePeerWithPC extends SimplePeer.Instance {
   _pc?: RTCPeerConnection
@@ -575,39 +623,17 @@ export class WebRTCService {
 
       this.onLocalStream?.(this.localStream)
 
-      // Создаем SimplePeer с улучшенной конфигурацией ICE серверов
+      // Получаем ICE серверы от Metered (или fallback на STUN)
+      const iceServers = await getIceServers()
+      logger.log('🧊 Using ICE servers:', iceServers.length, 'servers configured')
+
+      // Создаем SimplePeer с ICE серверами от Metered
       const peerConfig = {
         initiator: isInitiator,
         trickle: true,
         stream: this.localStream,
         config: {
-          iceServers: [
-            // STUN серверы (для большинства случаев)
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' },
-
-            // TURN серверы для случаев, когда STUN недостаточно
-            // Эти серверы предоставлены сообществом для тестирования
-            // В продакшене рекомендуется использовать собственные TURN серверы
-            {
-              urls: 'turn:openrelay.metered.ca:80',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            },
-            {
-              urls: 'turn:openrelay.metered.ca:443',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            },
-            {
-              urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
-            }
-          ],
+          iceServers: iceServers,
           // Оптимизации для лучшего соединения
           iceCandidatePoolSize: 10
         } as RTCConfiguration,
